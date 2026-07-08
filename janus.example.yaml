@@ -1,0 +1,57 @@
+server:
+  address: 127.0.0.1:8088
+
+registry:
+  path: janus.registry.json
+  refreshInterval: 30s
+  timeout: 5s
+
+defaults:
+  health:
+    interval: 10s
+    timeout: 5s
+    failureThreshold: 3
+    expectedStatus: 200
+    dns:
+      - cloudflare.com
+  recovery:
+    steps:
+      - action: retry-health-check
+      - action: restart
+      - action: notify
+
+notifications:
+  webhooks: []
+
+tunnels:
+  - name: production
+    command: cloudflared tunnel run production
+    mode: process
+    health:
+      local:
+        http: http://localhost:8080/health
+      remote:
+        https: https://example.com/health
+    recovery:
+      - action: retry-health-check
+      - action: restart
+      - action: notify
+    notifications:
+      webhook: true
+
+services:
+  - service:
+      name: grafana
+    local:
+      url: http://localhost:3000
+    public:
+      hostname: grafana.janus.dev
+    health:
+      path: /health
+    tunnels:
+      - id: primary
+        url: https://abc123.trycloudflare.com
+    tags:
+      - observability
+    labels:
+      owner: platform

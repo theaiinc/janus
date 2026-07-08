@@ -1,0 +1,37 @@
+{
+  "name": "@theaiinc/janus",
+  "version": "0.1.0",
+  "description": "The intelligent guardian for Cloudflared tunnels.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/theaiinc/janus.git"
+  },
+  "bugs": {
+    "url": "https://github.com/theaiinc/janus/issues"
+  },
+  "homepage": "https://github.com/theaiinc/janus#readme",
+  "keywords": [
+    "cloudflare",
+    "cloudflared",
+    "tunnel",
+    "daemon",
+    "monitoring",
+    "self-healing"
+  ],
+  "scripts": {
+    "build": "go build ./cmd/janus",
+    "mcp": "go run ./cmd/janus mcp",
+    "test": "go test ./..."
+  },
+  "files": [
+    "README.md",
+    "LICENSE",
+    "docs",
+    "cmd",
+    "internal",
+    "go.mod",
+    "go.sum",
+    "janus.example.yaml"
+  ]
+}
