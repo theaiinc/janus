@@ -66,8 +66,9 @@ jobs:
       - name: Publish @theaiinc/janus
         working-directory: sdk/npm/janus
         run: |
-          if [ "$(npm view @theaiinc/janus@$npm_package_version version 2>/dev/null || true)" = "$npm_package_version" ]; then
-            echo "@theaiinc/janus@$npm_package_version is already published"
+          version="$(npm pkg get version --raw)"
+          if [ "$(npm view @theaiinc/janus@$version version 2>/dev/null || true)" = "$version" ]; then
+            echo "@theaiinc/janus@$version is already published"
           else
             npm publish --access public
           fi
@@ -75,8 +76,9 @@ jobs:
       - name: Publish @theaiinc/janus-client
         working-directory: sdk/npm/janus-client
         run: |
-          if [ "$(npm view @theaiinc/janus-client@$npm_package_version version 2>/dev/null || true)" = "$npm_package_version" ]; then
-            echo "@theaiinc/janus-client@$npm_package_version is already published"
+          version="$(npm pkg get version --raw)"
+          if [ "$(npm view @theaiinc/janus-client@$version version 2>/dev/null || true)" = "$version" ]; then
+            echo "@theaiinc/janus-client@$version is already published"
           else
             npm publish --access public
           fi
