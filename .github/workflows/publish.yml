@@ -5,6 +5,11 @@ on:
     types:
       - published
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -25,7 +30,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name || github.ref }}
+          ref: ${{ inputs.tag || github.event.release.tag_name || github.ref }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -60,11 +65,21 @@ jobs:
 
       - name: Publish @theaiinc/janus
         working-directory: sdk/npm/janus
-        run: npm publish --access public
+        run: |
+          if [ "$(npm view @theaiinc/janus@$npm_package_version version 2>/dev/null || true)" = "$npm_package_version" ]; then
+            echo "@theaiinc/janus@$npm_package_version is already published"
+          else
+            npm publish --access public
+          fi
 
       - name: Publish @theaiinc/janus-client
         working-directory: sdk/npm/janus-client
-        run: npm publish --access public
+        run: |
+          if [ "$(npm view @theaiinc/janus-client@$npm_package_version version 2>/dev/null || true)" = "$npm_package_version" ]; then
+            echo "@theaiinc/janus-client@$npm_package_version is already published"
+          else
+            npm publish --access public
+          fi
 
       - name: Publish theaiinc-janus
         uses: pypa/gh-action-pypi-publish@release/v1
