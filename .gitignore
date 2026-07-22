@@ -1,3 +1,6 @@
 .githint
 __pycache__/
 *.pyc
+**/build/
+*.egg-info/
+dist/

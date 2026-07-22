@@ -21,3 +21,4 @@
 - Aha: Public SDKs live under `pkg/` for Go and `sdk/` for npm/Python, and all SDKs share the alias REST contract so existing daemon tests remain the compatibility floor.
 - Aha: A client-side endpoint-discovery model could reduce Janus data-plane traffic for streaming workloads, but it would intentionally change the PRD contract: aliases would resolve to short-lived public Cloudflared URLs and clients would query Janus for failover instead of using hidden server-side proxying.
 - Aha: The root npm package publishes only `sdk/npm` through GitHub Actions trusted publishing; Go, Python, and daemon sources remain repository code rather than npm package contents.
+- Aha: Janus publishes four independent distributions: `@theaiinc/janus` and `theaiinc-janus` are CLI wrappers for GitHub Release binaries, while `@theaiinc/janus-client` and `theaiinc-janus-client` are the language SDKs.

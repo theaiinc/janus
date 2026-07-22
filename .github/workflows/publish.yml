@@ -1,4 +1,4 @@
-name: Publish npm package
+name: Publish SDK packages
 
 on:
   release:
@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   publish:
-    name: Publish @theaiinc/janus
+    name: Publish npm and Python packages
     environment: release
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -30,27 +30,48 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.25.x"
+          go-version: '1.25.x'
           cache: true
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
 
-      - name: Set up npm trusted publishing
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up package tooling
         run: npm install --global npm@11.5.1
 
-      - name: Install dependencies
-        run: npm install --ignore-scripts
-
-      - name: Verify package
+      - name: Verify repository and SDKs
         run: |
           npm test
           npm run test:js
           npm run test:python
           go vet ./...
-          npm pack --dry-run
+          (cd sdk/npm/janus && npm pack --dry-run)
+          (cd sdk/npm/janus-client && npm pack --dry-run)
+          python -m pip install build
+          python -m build sdk/python/janus --outdir dist/janus
+          python -m build sdk/python/janus-client --outdir dist/janus-client
 
-      - name: Publish package
+      - name: Publish @theaiinc/janus
+        working-directory: sdk/npm/janus
         run: npm publish --access public
+
+      - name: Publish @theaiinc/janus-client
+        working-directory: sdk/npm/janus-client
+        run: npm publish --access public
+
+      - name: Publish theaiinc-janus
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/janus
+
+      - name: Publish theaiinc-janus-client
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/janus-client

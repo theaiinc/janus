@@ -1,8 +1,7 @@
 {
-  "name": "@theaiinc/janus",
+  "name": "janus-repository",
   "version": "0.1.0",
-  "main": "sdk/npm/index.js",
-  "exports": "./sdk/npm/index.js",
+  "private": true,
   "description": "The intelligent guardian for Cloudflared tunnels.",
   "license": "MIT",
   "repository": {
@@ -25,12 +24,8 @@
     "build": "go build ./cmd/janus",
     "mcp": "go run ./cmd/janus mcp",
     "test": "go test ./...",
-    "test:js": "node --test sdk/npm/*.test.js",
-    "test:python": "python -m unittest discover -s sdk/python/tests"
+    "test:js": "node --test sdk/npm/*/*.test.js sdk/npm/janus/bin/*.test.js",
+    "test:python": "python -m unittest discover -s sdk/python/janus-client/tests && python -m unittest discover -s sdk/python/janus/tests"
   },
-  "files": [
-    "README.md",
-    "LICENSE",
-    "sdk/npm"
-  ]
+  "files": []
 }

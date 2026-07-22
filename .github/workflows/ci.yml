@@ -26,7 +26,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.25.x"
+          go-version: '1.25.x'
           cache: true
 
       - name: Set up Node.js
@@ -44,10 +44,20 @@ jobs:
         run: npm run test:js
 
       - name: Run Python SDK tests
-        run: npm run test:python
+        run: |
+          python -m unittest discover -s sdk/python/janus-client/tests
+          python -m unittest discover -s sdk/python/janus/tests
 
       - name: Run Go vet
         run: go vet ./...
 
       - name: Validate npm package
-        run: npm pack --dry-run
+        run: |
+          (cd sdk/npm/janus && npm pack --dry-run)
+          (cd sdk/npm/janus-client && npm pack --dry-run)
+
+      - name: Validate Python packages
+        run: |
+          python -m pip install build
+          python -m build sdk/python/janus --outdir dist/janus
+          python -m build sdk/python/janus-client --outdir dist/janus-client

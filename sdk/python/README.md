@@ -1,19 +1,9 @@
-# `janus-client`
+# Janus Python distributions
 
-Python emitter and receiver client for Janus.
+This directory contains two independently published packages:
 
-```sh
-pip install janus-client
-```
+- `theaiinc-janus` in `janus/`: the platform binary CLI wrapper.
+- `theaiinc-janus-client` in `janus-client/`: the Python emitter and receiver SDK.
 
-Direct endpoint discovery is enabled by default. Use `mode="proxy"` to keep
-requests in Janus or `mode="auto"` to allow proxy fallback:
-
-```python
-from janus_client import Receiver
-
-receiver = Receiver("http://127.0.0.1:8088")
-response = receiver.receive("team", "llm", "stream")
-```
-
-Response bodies are returned as streams and are not buffered by the client.
+Both packages use unique PyPI names to avoid collisions with unrelated
+projects already published as `janus` and `janus-client`.

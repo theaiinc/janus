@@ -3,11 +3,12 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "janus-client"
-version = "0.1.0"
+name = "theaiinc-janus-client"
+version = "0.1.1"
 description = "Python emitter and receiver client for Janus"
 readme = "README.md"
 requires-python = ">=3.9"
 
 [tool.setuptools.packages.find]
 where = ["."]
+exclude = ["tests*"]

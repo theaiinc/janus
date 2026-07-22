@@ -63,6 +63,26 @@ Install the JavaScript package with:
 npm install @theaiinc/janus
 ```
 
+Install the JavaScript client SDK with:
+
+```sh
+npm install @theaiinc/janus-client
+```
+
+Install the Python packages with:
+
+```sh
+pip install theaiinc-janus
+pip install theaiinc-janus-client
+```
+
+Published distributions:
+
+- `@theaiinc/janus`: CLI wrapper
+- `@theaiinc/janus-client`: JavaScript emitter/receiver SDK
+- `theaiinc-janus`: Python CLI wrapper
+- `theaiinc-janus-client`: Python emitter/receiver SDK
+
 The data plane supports HTTP requests and HTTP-compatible response streaming.
 The direct mode exposes the selected Cloudflared URL through the explicit
 `/endpoint` route and returns `307 Temporary Redirect` from `/data` routes.

@@ -1,0 +1,20 @@
+{
+  "name": "@theaiinc/janus",
+  "version": "0.1.1",
+  "description": "Janus Cloudflared tunnel guardian CLI",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/theaiinc/janus.git"
+  },
+  "bin": {
+    "janus": "bin/janus.js"
+  },
+  "files": [
+    "bin/janus.js",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

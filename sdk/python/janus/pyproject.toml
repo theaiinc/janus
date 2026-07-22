@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "theaiinc-janus"
+version = "0.1.1"
+description = "Janus Cloudflared tunnel guardian CLI"
+readme = "README.md"
+requires-python = ">=3.9"
+
+[project.scripts]
+janus = "janus_cli:main"
+
+[tool.setuptools]
+py-modules = ["janus_cli"]
