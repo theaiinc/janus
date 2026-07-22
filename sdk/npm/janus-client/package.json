@@ -3,6 +3,10 @@
   "version": "0.1.1",
   "description": "JavaScript emitter and receiver client for Janus",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/theaiinc/janus.git"
+  },
   "main": "index.js",
   "exports": "./index.js",
   "files": [
