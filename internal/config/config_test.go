@@ -18,6 +18,9 @@ tunnels:
 	if cfg.Server.Address != "127.0.0.1:8088" {
 		t.Fatalf("unexpected server address: %s", cfg.Server.Address)
 	}
+	if cfg.DataPlane.Mode != "direct" {
+		t.Fatalf("unexpected data plane mode: %s", cfg.DataPlane.Mode)
+	}
 	tunnel := cfg.Tunnels[0]
 	if tunnel.Mode != "process" {
 		t.Fatalf("unexpected mode: %s", tunnel.Mode)
@@ -30,6 +33,37 @@ tunnels:
 	}
 	if len(tunnel.Recovery) == 0 {
 		t.Fatal("expected default recovery steps")
+	}
+}
+
+func TestParseAcceptsDataPlaneModes(t *testing.T) {
+	for _, mode := range []string{"direct", "proxy", "auto"} {
+		cfg, err := Parse([]byte(`
+dataPlane:
+  mode: ` + mode + `
+tunnels:
+  - name: production
+    command: cloudflared tunnel run production
+`))
+		if err != nil {
+			t.Fatalf("mode %q returned error: %v", mode, err)
+		}
+		if cfg.DataPlane.Mode != mode {
+			t.Fatalf("mode %q was not preserved", mode)
+		}
+	}
+}
+
+func TestParseRejectsInvalidDataPlaneMode(t *testing.T) {
+	_, err := Parse([]byte(`
+dataPlane:
+  mode: invalid
+tunnels:
+  - name: production
+    command: cloudflared tunnel run production
+`))
+	if err == nil || !strings.Contains(err.Error(), "dataPlane.mode") {
+		t.Fatalf("expected invalid data plane mode error, got %v", err)
 	}
 }
 

@@ -172,7 +172,9 @@ Janus monitors:
 
 ### 6. Dynamic Service Registry
 
-Janus provides a service discovery layer on top of Cloudflare Tunnels. Cloudflared URLs are treated as implementation details, while applications receive stable public identities.
+Janus provides a service discovery layer on top of Cloudflare Tunnels. Applications
+receive stable public identities and may either use Janus as a proxy or discover
+the currently selected endpoint for direct access.
 
 Example mapping:
 
@@ -225,11 +227,50 @@ Non-goals for the registry layer:
 
 - Cloudflare DNS management
 - Cloudflare API integration
-- Reverse proxy
+- General-purpose reverse proxy (the optional alias proxy is limited to the
+  alias data plane)
 - Load balancer
 - Authentication system
 
-### 7. Dashboard
+### 7. Alias-Based Data Plane
+
+Janus exposes public emitter and receiver SDKs for services that use a stable
+`namespace/alias` identity. Janus remains the control plane for registration,
+health, endpoint selection, and failover. The default direct data plane resolves
+an alias to the selected Cloudflared endpoint, then lets the client connect
+directly. The optional proxy data plane keeps the request inside Janus.
+
+The first supported transports are HTTP requests and HTTP response streaming.
+WebSocket upgrades, raw TCP, and arbitrary byte streams require a separately
+configured stream-capable Cloudflare product and are not implied by the HTTP
+alias API.
+
+Data-plane modes are:
+
+- `direct`: endpoint discovery and direct client connections; no Janus proxy is
+  required.
+- `proxy`: Janus forwards alias data requests and keeps endpoint URLs private.
+- `auto`: SDKs try direct discovery first and can fall back to proxying when
+  proxy support is configured.
+
+The endpoint discovery route returns the selected URL, tunnel ID, health
+metadata, and HTTP/streaming capabilities. Alias `/data` routes in direct mode
+return `307 Temporary Redirect`; public SDKs follow the redirect and do not
+expose the intermediate Janus response. Endpoint URLs are intentionally public
+in direct mode, so deployments must apply origin authentication independently.
+
+Supported clients:
+
+- Go packages: `pkg/emitter` and `pkg/receiver`
+- JavaScript/TypeScript package: `sdk/npm`
+- Python package: `sdk/python`
+
+The registry remains the control plane for registration, health, and endpoint
+selection. Clients re-resolve an alias after a connection failure. An existing
+HTTP response stream cannot be migrated to another endpoint, so streaming
+applications need request IDs and application-level retry or resume semantics.
+
+### 8. Dashboard
 
 The dashboard displays:
 

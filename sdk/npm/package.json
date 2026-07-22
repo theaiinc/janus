@@ -1,0 +1,10 @@
+{
+  "name": "@theaiinc/janus-client",
+  "version": "0.1.0",
+  "description": "JavaScript emitter and receiver client for Janus",
+  "license": "MIT",
+  "main": "index.js",
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -38,6 +38,7 @@ func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
 type Config struct {
 	Server        ServerConfig        `yaml:"server"`
 	Registry      RegistryConfig      `yaml:"registry"`
+	DataPlane     DataPlaneConfig     `yaml:"dataPlane"`
 	Defaults      DefaultConfig       `yaml:"defaults"`
 	Notifications NotificationsConfig `yaml:"notifications"`
 	Services      []ServiceConfig     `yaml:"services"`
@@ -52,6 +53,10 @@ type RegistryConfig struct {
 	Path            string   `yaml:"path"`
 	RefreshInterval Duration `yaml:"refreshInterval"`
 	Timeout         Duration `yaml:"timeout"`
+}
+
+type DataPlaneConfig struct {
+	Mode string `yaml:"mode"`
 }
 
 type DefaultConfig struct {
@@ -80,8 +85,10 @@ type ServiceConfig struct {
 }
 
 type ServiceIdentityConfig struct {
-	ID   string `yaml:"id"`
-	Name string `yaml:"name"`
+	ID        string `yaml:"id"`
+	Name      string `yaml:"name"`
+	Namespace string `yaml:"namespace"`
+	Alias     string `yaml:"alias"`
 }
 
 type ServiceLocalConfig struct {
@@ -173,6 +180,9 @@ func (c *Config) ApplyDefaults() {
 	if c.Registry.Timeout.Duration == 0 {
 		c.Registry.Timeout.Duration = 5 * time.Second
 	}
+	if c.DataPlane.Mode == "" {
+		c.DataPlane.Mode = "direct"
+	}
 	applyHealthDefaults(&c.Defaults.Health)
 	for i := range c.Tunnels {
 		if c.Tunnels[i].Mode == "" {
@@ -247,6 +257,9 @@ func mergeHealth(dst *HealthConfig, defaults HealthConfig) {
 func (c Config) Validate() error {
 	if len(c.Tunnels) == 0 && len(c.Services) == 0 {
 		return errors.New("at least one tunnel or service is required")
+	}
+	if c.DataPlane.Mode != "direct" && c.DataPlane.Mode != "proxy" && c.DataPlane.Mode != "auto" {
+		return fmt.Errorf("dataPlane.mode must be direct, proxy, or auto")
 	}
 	seen := make(map[string]struct{}, len(c.Tunnels))
 	for i, t := range c.Tunnels {

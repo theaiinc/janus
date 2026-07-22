@@ -148,6 +148,32 @@ func (a *App) RefreshService(ctx context.Context, id string) (registry.ServiceRe
 	return a.registry.Refresh(ctx, id)
 }
 
+func (a *App) RegisterAlias(ctx context.Context, request registry.RegisterRequest) (registry.ServiceRegistration, error) {
+	return a.registry.Register(ctx, request)
+}
+
+func (a *App) Alias(namespace, alias string) (registry.ServiceRegistration, error) {
+	return a.registry.GetAlias(namespace, alias)
+}
+
+func (a *App) DataPlaneMode() string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.cfg.DataPlane.Mode
+}
+
+func (a *App) ProxyAlias(ctx context.Context, namespace, alias string, request *http.Request) (*http.Response, error) {
+	return a.registry.Proxy(ctx, namespace, alias, request)
+}
+
+func (a *App) ResolveAliasEndpoint(namespace, alias string) (registry.TunnelEndpoint, error) {
+	return a.registry.ResolveEndpoint(namespace, alias)
+}
+
+func (a *App) ResolveAliasEndpointInfo(namespace, alias string) (registry.EndpointResolution, error) {
+	return a.registry.ResolveEndpointInfo(namespace, alias)
+}
+
 func (a *App) Restart(ctx context.Context, id string) error {
 	monitor, err := a.monitor(id)
 	if err != nil {
@@ -236,6 +262,8 @@ func (a *App) loadConfiguredServices(ctx context.Context, services []config.Serv
 		_, err := a.registry.Upsert(ctx, registry.ServiceRegistration{
 			ID:         service.Service.ID,
 			Name:       service.Service.Name,
+			Namespace:  service.Service.Namespace,
+			Alias:      service.Service.Alias,
 			Hostname:   service.Public.Hostname,
 			LocalURL:   service.Local.URL,
 			HealthPath: service.Health.Path,

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -21,6 +22,7 @@ type fakeBackend struct {
 	services map[string]registry.ServiceRegistration
 	reloads  int
 	err      error
+	mode     string
 }
 
 func (f *fakeBackend) Statuses() []tunnel.Status {
@@ -98,6 +100,62 @@ func (f *fakeBackend) ServiceTunnels(id string) ([]registry.TunnelEndpoint, erro
 
 func (f *fakeBackend) RefreshService(_ context.Context, id string) (registry.ServiceRegistration, error) {
 	return f.Service(id)
+}
+
+func (f *fakeBackend) RegisterAlias(_ context.Context, request registry.RegisterRequest) (registry.ServiceRegistration, error) {
+	service := request.ToRegistration(time.Now().UTC())
+	service.Health.Status = registry.StatusHealthy
+	if f.services == nil {
+		f.services = make(map[string]registry.ServiceRegistration)
+	}
+	f.services[service.ID] = service
+	return service, f.err
+}
+
+func (f *fakeBackend) Alias(namespace, alias string) (registry.ServiceRegistration, error) {
+	for _, service := range f.services {
+		if service.Namespace == namespace && service.Alias == alias {
+			return service, nil
+		}
+	}
+	return registry.ServiceRegistration{}, registry.ErrNotFound
+}
+
+func (f *fakeBackend) ProxyAlias(_ context.Context, namespace, alias string, _ *http.Request) (*http.Response, error) {
+	if _, err := f.Alias(namespace, alias); err != nil {
+		return nil, err
+	}
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader("payload")),
+	}, nil
+}
+
+func (f *fakeBackend) DataPlaneMode() string {
+	if f.mode == "" {
+		return "proxy"
+	}
+	return f.mode
+}
+
+func (f *fakeBackend) ResolveAliasEndpoint(namespace, alias string) (registry.TunnelEndpoint, error) {
+	service, err := f.Alias(namespace, alias)
+	if err != nil {
+		return registry.TunnelEndpoint{}, err
+	}
+	if len(service.Tunnels) == 0 {
+		return registry.TunnelEndpoint{}, registry.ErrNoEndpoint
+	}
+	return service.Tunnels[0], nil
+}
+
+func (f *fakeBackend) ResolveAliasEndpointInfo(namespace, alias string) (registry.EndpointResolution, error) {
+	endpoint, err := f.ResolveAliasEndpoint(namespace, alias)
+	if err != nil {
+		return registry.EndpointResolution{}, err
+	}
+	return registry.EndpointResolution{TunnelEndpoint: endpoint, Generation: "test-generation"}, nil
 }
 
 func TestServerStatusAndMetrics(t *testing.T) {
@@ -233,5 +291,81 @@ func TestServerServiceRoutes(t *testing.T) {
 	server.Handler().ServeHTTP(deleteRes, deleteReq)
 	if deleteRes.Code != http.StatusAccepted {
 		t.Fatalf("expected 202, got %d: %s", deleteRes.Code, deleteRes.Body.String())
+	}
+}
+
+func TestServerAliasRoutesHideEndpointDetails(t *testing.T) {
+	backend := &fakeBackend{services: make(map[string]registry.ServiceRegistration)}
+	server := New("127.0.0.1:0", backend)
+	register := httptest.NewRequest(http.MethodPut, "/api/namespaces/team/aliases/events",
+		strings.NewReader(`{"name":"events","hostname":"events.janus.dev","localUrl":"http://origin","tunnels":[{"id":"primary","url":"https://secret.trycloudflare.com"}]}`))
+	registerResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(registerResponse, register)
+	if registerResponse.Code != http.StatusCreated {
+		t.Fatalf("expected alias registration 201, got %d: %s", registerResponse.Code, registerResponse.Body.String())
+	}
+	if strings.Contains(registerResponse.Body.String(), "trycloudflare.com") {
+		t.Fatal("alias response disclosed tunnel URL")
+	}
+
+	data := httptest.NewRequest(http.MethodPost, "/api/namespaces/team/aliases/events/data/send", strings.NewReader("hello"))
+	dataResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(dataResponse, data)
+	if dataResponse.Code != http.StatusOK || dataResponse.Body.String() != "payload" {
+		t.Fatalf("unexpected alias data response: %d %q", dataResponse.Code, dataResponse.Body.String())
+	}
+}
+
+func TestServerDirectAliasRedirect(t *testing.T) {
+	backend := &fakeBackend{
+		mode: "direct",
+		services: map[string]registry.ServiceRegistration{
+			"events": {
+				ID:        "events",
+				Namespace: "team",
+				Alias:     "events",
+				Tunnels: []registry.TunnelEndpoint{{
+					ID:  "primary",
+					URL: "https://secret.trycloudflare.com/base",
+				}},
+			},
+		},
+	}
+	server := New("127.0.0.1:0", backend)
+	request := httptest.NewRequest(http.MethodPost, "/api/namespaces/team/aliases/events/data/stream?x=1", strings.NewReader("hello"))
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusTemporaryRedirect {
+		t.Fatalf("expected 307, got %d: %s", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get("Location"); got != "https://secret.trycloudflare.com/base/stream?x=1" {
+		t.Fatalf("unexpected redirect location: %s", got)
+	}
+}
+
+func TestServerAliasEndpointDiscovery(t *testing.T) {
+	backend := &fakeBackend{
+		mode: "direct",
+		services: map[string]registry.ServiceRegistration{
+			"events": {
+				ID:        "events",
+				Namespace: "team",
+				Alias:     "events",
+				Tunnels: []registry.TunnelEndpoint{{
+					ID:  "primary",
+					URL: "https://secret.trycloudflare.com",
+				}},
+			},
+		},
+	}
+	server := New("127.0.0.1:0", backend)
+	request := httptest.NewRequest(http.MethodGet, "/api/namespaces/team/aliases/events/endpoint", nil)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), "secret.trycloudflare.com") {
+		t.Fatalf("expected endpoint URL, got %s", response.Body.String())
 	}
 }

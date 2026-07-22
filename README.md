@@ -44,6 +44,38 @@ services:
         url: https://abc123.trycloudflare.com
 ```
 
+## Emitter and Receiver SDKs
+
+Applications can use a stable `namespace/alias` instead of resolving or
+storing a Cloudflared URL. Janus selects a healthy endpoint and the SDK
+connects directly to it by default, keeping Janus out of the high-volume data
+path. Set `dataPlane.mode: proxy` when requests must remain inside Janus.
+
+Public clients are available in:
+
+- Go: `github.com/theaiinc/janus/pkg/emitter` and `pkg/receiver`
+- JavaScript/TypeScript: `sdk/npm`
+- Python: `sdk/python`
+
+Install the JavaScript package with:
+
+```sh
+npm install @theaiinc/janus
+```
+
+The data plane supports HTTP requests and HTTP-compatible response streaming.
+The direct mode exposes the selected Cloudflared URL through the explicit
+`/endpoint` route and returns `307 Temporary Redirect` from `/data` routes.
+Go, npm, and Python clients follow that redirect without exposing the
+intermediate response to consumers. Raw TCP and WebSockets require a
+separately configured stream transport.
+
+Clients can use `direct`, `proxy`, or `auto` transport modes. In `auto`, the
+SDK attempts direct endpoint discovery first and falls back to Janus proxying
+when the server is configured for proxy support. A failed in-flight LLM stream
+cannot be migrated transparently; applications should use request IDs and
+resume/retry semantics.
+
 ## API
 
 Janus serves these endpoints by default on `127.0.0.1:8088`:
@@ -63,6 +95,10 @@ Janus serves these endpoints by default on `127.0.0.1:8088`:
 - `GET /api/services/{id}/health`
 - `GET /api/services/{id}/tunnels`
 - `POST /api/services/{id}/refresh`
+- `PUT /api/namespaces/{namespace}/aliases/{alias}`
+- `GET /api/namespaces/{namespace}/aliases/{alias}`
+- `GET /api/namespaces/{namespace}/aliases/{alias}/endpoint`
+- `GET|POST|PUT|PATCH|DELETE /api/namespaces/{namespace}/aliases/{alias}/data/{path}`
 
 ## MCP Server
 

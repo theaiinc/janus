@@ -75,6 +75,12 @@ func ValidateService(service ServiceRegistration) error {
 	if strings.TrimSpace(service.Name) == "" {
 		return errors.New("service name is required")
 	}
+	if strings.TrimSpace(service.Namespace) == "" {
+		return errors.New("service namespace is required")
+	}
+	if strings.TrimSpace(service.Alias) == "" {
+		return errors.New("service alias is required")
+	}
 	if strings.TrimSpace(service.Hostname) == "" {
 		return errors.New("service hostname is required")
 	}

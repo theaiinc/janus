@@ -30,6 +30,8 @@ const (
 type ServiceRegistration struct {
 	ID           string            `json:"id"`
 	Name         string            `json:"name"`
+	Namespace    string            `json:"namespace"`
+	Alias        string            `json:"alias"`
 	Hostname     string            `json:"hostname"`
 	LocalURL     string            `json:"localUrl"`
 	HealthPath   string            `json:"healthPath,omitempty"`
@@ -64,6 +66,8 @@ type ServiceHealth struct {
 type RegisterRequest struct {
 	ID         string            `json:"id,omitempty"`
 	Name       string            `json:"name,omitempty"`
+	Namespace  string            `json:"namespace,omitempty"`
+	Alias      string            `json:"alias,omitempty"`
 	Hostname   string            `json:"hostname,omitempty"`
 	LocalURL   string            `json:"localUrl,omitempty"`
 	HealthPath string            `json:"healthPath,omitempty"`
@@ -95,6 +99,8 @@ type HealthSpec struct {
 
 func (r RegisterRequest) ToRegistration(now time.Time) ServiceRegistration {
 	name := firstNonEmpty(r.Name, nestedServiceName(r.Service))
+	namespace := firstNonEmpty(r.Namespace, "default")
+	alias := firstNonEmpty(r.Alias, name)
 	hostname := firstNonEmpty(r.Hostname, nestedHostname(r.Public))
 	localURL := firstNonEmpty(r.LocalURL, nestedLocalURL(r.Local))
 	healthPath := firstNonEmpty(r.HealthPath, nestedHealthPath(r.Health))
@@ -102,6 +108,8 @@ func (r RegisterRequest) ToRegistration(now time.Time) ServiceRegistration {
 	return ServiceRegistration{
 		ID:         id,
 		Name:       name,
+		Namespace:  namespace,
+		Alias:      alias,
 		Hostname:   hostname,
 		LocalURL:   localURL,
 		HealthPath: healthPath,

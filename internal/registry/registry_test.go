@@ -2,9 +2,11 @@ package registry
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -114,6 +116,136 @@ func TestRegistryUnregister(t *testing.T) {
 	}
 	if _, err := registry.Get("grafana"); err != ErrNotFound {
 		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestRegistryAliasProxyKeepsEndpointInternal(t *testing.T) {
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			_, _ = w.Write([]byte("ok"))
+			return
+		}
+		_, _ = w.Write([]byte("delivered"))
+	}))
+	defer origin.Close()
+
+	registry, err := New(nil, events.NewRecorder(20), Options{Timeout: time.Second})
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+	service, err := registry.Register(context.Background(), RegisterRequest{
+		Namespace:  "team",
+		Alias:      "events",
+		Name:       "events",
+		Hostname:   "events.janus.dev",
+		LocalURL:   origin.URL,
+		HealthPath: "/health",
+		Tunnels: []TunnelEndpoint{{
+			ID:  "primary",
+			URL: origin.URL,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Register returned error: %v", err)
+	}
+	if service.Namespace != "team" || service.Alias != "events" {
+		t.Fatalf("unexpected alias identity: %#v", service)
+	}
+	resolved, err := registry.GetAlias("team", "events")
+	if err != nil {
+		t.Fatalf("GetAlias returned error: %v", err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/payload", nil)
+	response, err := registry.Proxy(context.Background(), "team", "events", request)
+	if err != nil {
+		t.Fatalf("Proxy returned error: %v", err)
+	}
+	defer response.Body.Close()
+	body, _ := io.ReadAll(response.Body)
+	if string(body) != "delivered" {
+		t.Fatalf("unexpected proxy body: %q", body)
+	}
+	if strings.Contains(string(body), resolved.Tunnels[0].URL) {
+		t.Fatal("proxy response disclosed tunnel URL")
+	}
+}
+
+func TestRegistryResolvesActiveEndpoint(t *testing.T) {
+	registry, err := New(nil, events.NewRecorder(20), Options{})
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+	_, err = registry.Register(context.Background(), RegisterRequest{
+		Namespace: "team",
+		Alias:     "events",
+		Name:      "events",
+		Hostname:  "events.janus.dev",
+		LocalURL:  "http://localhost:3000",
+		Tunnels: []TunnelEndpoint{
+			{ID: "primary", URL: "https://primary.example", Status: StatusHealthy},
+			{ID: "backup", URL: "https://backup.example", Status: StatusHealthy},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Register returned error: %v", err)
+	}
+	registry.mu.Lock()
+	service := registry.services["events"]
+	service.ActiveTunnel = "backup"
+	service.Tunnels[0].Status = StatusHealthy
+	service.Tunnels[1].Status = StatusHealthy
+	registry.services["events"] = service
+	registry.mu.Unlock()
+
+	endpoint, err := registry.ResolveEndpoint("team", "events")
+	if err != nil {
+		t.Fatalf("ResolveEndpoint returned error: %v", err)
+	}
+	if endpoint.ID != "backup" {
+		t.Fatalf("expected active backup endpoint, got %q", endpoint.ID)
+	}
+	url, err := EndpointURL(endpoint, "stream", "q=1")
+	if err != nil {
+		t.Fatalf("EndpointURL returned error: %v", err)
+	}
+	if url != "https://backup.example/stream?q=1" {
+		t.Fatalf("unexpected endpoint URL: %s", url)
+	}
+}
+
+func TestRegistrySkipsOfflineActiveEndpoint(t *testing.T) {
+	registry, err := New(nil, events.NewRecorder(20), Options{})
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+	_, err = registry.Register(context.Background(), RegisterRequest{
+		Namespace: "team",
+		Alias:     "events",
+		Name:      "events",
+		Hostname:  "events.janus.dev",
+		LocalURL:  "http://localhost:3000",
+		Tunnels: []TunnelEndpoint{
+			{ID: "primary", URL: "https://primary.example", Status: StatusOffline},
+			{ID: "backup", URL: "https://backup.example", Status: StatusHealthy},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Register returned error: %v", err)
+	}
+	registry.mu.Lock()
+	service := registry.services["events"]
+	service.ActiveTunnel = "primary"
+	service.Tunnels[0].Status = StatusOffline
+	service.Tunnels[1].Status = StatusHealthy
+	registry.services["events"] = service
+	registry.mu.Unlock()
+
+	endpoint, err := registry.ResolveEndpoint("team", "events")
+	if err != nil {
+		t.Fatalf("ResolveEndpoint returned error: %v", err)
+	}
+	if endpoint.ID != "backup" {
+		t.Fatalf("expected backup endpoint, got %q", endpoint.ID)
 	}
 }
 

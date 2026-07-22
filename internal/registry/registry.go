@@ -1,8 +1,11 @@
 package registry
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"sort"
@@ -16,6 +19,14 @@ import (
 type Options struct {
 	RefreshInterval time.Duration
 	Timeout         time.Duration
+}
+
+var ErrNoEndpoint = errors.New("no tunnel endpoints available")
+
+type EndpointResolution struct {
+	TunnelEndpoint
+	Generation string     `json:"generation"`
+	ExpiresAt  *time.Time `json:"expiresAt,omitempty"`
 }
 
 type Registry struct {
@@ -49,7 +60,7 @@ func New(store Store, recorder *events.Recorder, opts Options) (*Registry, error
 			return nil, err
 		}
 		for _, service := range loaded {
-			if err := ValidateService(service); err != nil {
+			if err := registry.prepareService(&service); err != nil {
 				return nil, err
 			}
 			registry.services[service.ID] = cloneService(service)
@@ -71,6 +82,10 @@ func (r *Registry) Register(ctx context.Context, request RegisterRequest) (Servi
 
 	r.mu.Lock()
 	if _, ok := r.services[service.ID]; ok {
+		r.mu.Unlock()
+		return ServiceRegistration{}, ErrAlreadyExists
+	}
+	if _, ok := r.findAliasLocked(service.Namespace, service.Alias); ok {
 		r.mu.Unlock()
 		return ServiceRegistration{}, ErrAlreadyExists
 	}
@@ -97,6 +112,10 @@ func (r *Registry) Upsert(ctx context.Context, service ServiceRegistration) (Ser
 	r.mu.Lock()
 	if existing, ok := r.services[service.ID]; ok && !existing.CreatedAt.IsZero() {
 		service.CreatedAt = existing.CreatedAt
+	}
+	if existing, ok := r.findAliasLocked(service.Namespace, service.Alias); ok && existing.ID != service.ID {
+		r.mu.Unlock()
+		return ServiceRegistration{}, ErrAlreadyExists
 	}
 	r.services[service.ID] = cloneService(service)
 	services := r.snapshotLocked()
@@ -135,6 +154,125 @@ func (r *Registry) Get(id string) (ServiceRegistration, error) {
 		return ServiceRegistration{}, ErrNotFound
 	}
 	return cloneService(service), nil
+}
+
+func (r *Registry) GetAlias(namespace, alias string) (ServiceRegistration, error) {
+	namespace = NormalizeID(namespace)
+	alias = NormalizeID(alias)
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	service, ok := r.findAliasLocked(namespace, alias)
+	if !ok {
+		return ServiceRegistration{}, ErrNotFound
+	}
+	return cloneService(service), nil
+}
+
+func (r *Registry) ResolveEndpoint(namespace, alias string) (TunnelEndpoint, error) {
+	resolution, err := r.ResolveEndpointInfo(namespace, alias)
+	if err != nil {
+		return TunnelEndpoint{}, err
+	}
+	return resolution.TunnelEndpoint, nil
+}
+
+func (r *Registry) ResolveEndpointInfo(namespace, alias string) (EndpointResolution, error) {
+	service, err := r.GetAlias(namespace, alias)
+	if err != nil {
+		return EndpointResolution{}, err
+	}
+	endpoints := orderedEndpoints(service)
+	for _, endpoint := range endpoints {
+		if endpoint.ID == service.ActiveTunnel && (endpoint.Status == StatusHealthy || endpoint.Status == StatusUnknown) {
+			return endpointResolution(service, endpoint), nil
+		}
+	}
+	for _, endpoint := range endpoints {
+		if endpoint.Status == StatusHealthy {
+			return endpointResolution(service, endpoint), nil
+		}
+	}
+	for _, endpoint := range endpoints {
+		if endpoint.Status == StatusUnknown {
+			return endpointResolution(service, endpoint), nil
+		}
+	}
+	return EndpointResolution{}, ErrNoEndpoint
+}
+
+func endpointResolution(service ServiceRegistration, endpoint TunnelEndpoint) EndpointResolution {
+	return EndpointResolution{
+		TunnelEndpoint: endpoint,
+		Generation:     service.UpdatedAt.UTC().Format(time.RFC3339Nano),
+	}
+}
+
+func EndpointURL(endpoint TunnelEndpoint, path, rawQuery string) (string, error) {
+	target, err := url.Parse(endpoint.URL)
+	if err != nil {
+		return "", err
+	}
+	if path != "" {
+		target.Path = strings.TrimRight(target.Path, "/") + "/" + strings.TrimLeft(path, "/")
+	}
+	target.RawQuery = rawQuery
+	return target.String(), nil
+}
+
+// Proxy forwards a request through the currently selected alias endpoint.
+// Endpoint URLs are intentionally kept inside the registry boundary.
+func (r *Registry) Proxy(ctx context.Context, namespace, alias string, in *http.Request) (*http.Response, error) {
+	service, err := r.GetAlias(namespace, alias)
+	if err != nil {
+		return nil, err
+	}
+	var body []byte
+	if in.Body != nil {
+		body, err = io.ReadAll(in.Body)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	endpoints := orderedEndpoints(service)
+	var lastErr error
+	for _, endpoint := range endpoints {
+		target, parseErr := EndpointURL(endpoint, in.URL.Path, in.URL.RawQuery)
+		if parseErr != nil {
+			lastErr = parseErr
+			continue
+		}
+		out, requestErr := http.NewRequestWithContext(ctx, in.Method, target, bytes.NewReader(body))
+		if requestErr != nil {
+			lastErr = requestErr
+			continue
+		}
+		out.Header = in.Header.Clone()
+		response, requestErr := r.client.Do(out)
+		if requestErr == nil {
+			return response, nil
+		}
+		lastErr = requestErr
+	}
+	if lastErr == nil {
+		lastErr = ErrNoEndpoint
+	}
+	return nil, lastErr
+}
+
+func orderedEndpoints(service ServiceRegistration) []TunnelEndpoint {
+	endpoints := make([]TunnelEndpoint, 0, len(service.Tunnels))
+	for _, endpoint := range service.Tunnels {
+		if endpoint.ID == service.ActiveTunnel {
+			endpoints = append(endpoints, endpoint)
+		}
+	}
+	for _, endpoint := range service.Tunnels {
+		if endpoint.ID != service.ActiveTunnel {
+			endpoints = append(endpoints, endpoint)
+		}
+	}
+	return endpoints
 }
 
 func (r *Registry) List() []ServiceRegistration {
@@ -280,6 +418,10 @@ func (r *Registry) checkURL(ctx context.Context, rawURL string) (bool, float64, 
 func (r *Registry) prepareService(service *ServiceRegistration) error {
 	service.ID = firstNonEmpty(service.ID, NormalizeID(service.Name))
 	service.Name = strings.TrimSpace(service.Name)
+	service.Namespace = firstNonEmpty(service.Namespace, "default")
+	service.Namespace = NormalizeID(service.Namespace)
+	service.Alias = firstNonEmpty(service.Alias, service.Name)
+	service.Alias = NormalizeID(service.Alias)
 	service.Hostname = strings.TrimSpace(service.Hostname)
 	service.LocalURL = strings.TrimRight(strings.TrimSpace(service.LocalURL), "/")
 	service.HealthPath = normalizeHealthPath(service.HealthPath)
@@ -296,6 +438,15 @@ func (r *Registry) prepareService(service *ServiceRegistration) error {
 		}
 	}
 	return ValidateService(*service)
+}
+
+func (r *Registry) findAliasLocked(namespace, alias string) (ServiceRegistration, bool) {
+	for _, service := range r.services {
+		if service.Namespace == namespace && service.Alias == alias {
+			return service, true
+		}
+	}
+	return ServiceRegistration{}, false
 }
 
 func (r *Registry) snapshotLocked() []ServiceRegistration {

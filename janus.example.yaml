@@ -6,6 +6,11 @@ registry:
   refreshInterval: 30s
   timeout: 5s
 
+dataPlane:
+  # direct returns 307 redirects to the selected Cloudflared endpoint.
+  # Use proxy to keep alias traffic inside Janus.
+  mode: direct
+
 defaults:
   health:
     interval: 10s
