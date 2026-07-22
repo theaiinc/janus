@@ -1,1 +1,3 @@
 .githint
+__pycache__/
+*.pyc
