@@ -32,9 +32,38 @@ func NewRootCommand() *cobra.Command {
 
 	root.AddCommand(runCommand(&configPath))
 	root.AddCommand(mcpCommand())
+	root.AddCommand(pairingCodeCommand(&configPath))
 	root.AddCommand(validateConfigCommand(&configPath))
 	root.AddCommand(versionCommand())
 	return root
+}
+
+func pairingCodeCommand(configPath *string) *cobra.Command {
+	var tenant string
+	var ttl time.Duration
+	cmd := &cobra.Command{
+		Use:   "pairing-code",
+		Short: "Generate a short-lived mobile pairing code",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load(*configPath)
+			if err != nil {
+				return err
+			}
+			janus, err := app.New(cfg, *configPath)
+			if err != nil {
+				return err
+			}
+			code, err := janus.GeneratePairingCode(cmd.Context(), tenant, ttl)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), code)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&tenant, "tenant", "default", "tenant for the mobile credential")
+	cmd.Flags().DurationVar(&ttl, "ttl", 10*time.Minute, "pairing code lifetime")
+	return cmd
 }
 
 func Execute() error {
@@ -55,13 +84,16 @@ func runCommand(configPath *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			server := api.New(cfg.Server.Address, janus)
+			server := api.New(cfg.Server.Address, janus, janus.Authenticator())
 			janus.SetAPIServer(server)
 
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
 			fmt.Fprintf(cmd.OutOrStdout(), "janus listening on %s\n", cfg.Server.Address)
+			if code := janus.PairingCode(); code != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "mobile pairing code: %s\n", code)
+			}
 			err = janus.Run(ctx)
 			if errors.Is(err, context.Canceled) {
 				return nil

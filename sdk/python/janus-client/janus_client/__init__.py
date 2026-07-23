@@ -2,6 +2,7 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
+import time
 
 
 class JanusError(RuntimeError):
@@ -11,8 +12,10 @@ class JanusError(RuntimeError):
 
 
 class Client:
-    def __init__(self, base_url):
+    def __init__(self, base_url, api_key=""):
         self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+        self._endpoint_cache = {}
 
     def request(self, method, path, body=None, content_type=None):
         return self.request_url(self.base_url + path, method, body, content_type)
@@ -21,20 +24,53 @@ class Client:
         data = body
         if isinstance(body, (dict, list)):
             data = json.dumps(body).encode()
+        headers = {"Content-Type": content_type} if content_type else {}
+        if self.api_key:
+            headers["Authorization"] = "Bearer " + self.api_key
         request = urllib.request.Request(
             url,
             data=data,
             method=method,
-            headers={"Content-Type": content_type} if content_type else {},
+            headers=headers,
         )
         try:
             return urllib.request.urlopen(request)
         except urllib.error.HTTPError as error:
             raise JanusError(error.code, error.read().decode()) from error
 
+    def pair(self, code):
+        response = self.request(
+            "POST",
+            "/api/auth/pairing/exchange",
+            {"code": str(code).strip()},
+            "application/json",
+        )
+        result = json.loads(response.read())
+        if not result.get("apiKey"):
+            raise JanusError(500, "pairing response did not include an API key")
+        self.api_key = result["apiKey"]
+        return result
+
     def endpoint(self, namespace, alias):
+        key = (namespace, alias)
+        cached = self._endpoint_cache.get(key)
+        if cached and cached["expires"] > time.time():
+            return cached["endpoint"]
         response = self.request("GET", self.alias_path(namespace, alias) + "/endpoint")
-        return json.loads(response.read())
+        endpoint = json.loads(response.read())
+        expires = time.time() + 15
+        if endpoint.get("expiresAt"):
+            try:
+                expires = __import__("datetime").datetime.fromisoformat(
+                    endpoint["expiresAt"].replace("Z", "+00:00")
+                ).timestamp()
+            except ValueError:
+                pass
+        self._endpoint_cache[key] = {"endpoint": endpoint, "expires": expires}
+        return endpoint
+
+    def invalidate_endpoint(self, namespace, alias):
+        self._endpoint_cache.pop((namespace, alias), None)
 
     def request_endpoint(self, endpoint, method, path="", body=None, content_type=None):
         relative = urllib.parse.urlsplit(path)

@@ -1,0 +1,12 @@
+services:
+  janus:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "18088:8088"
+    volumes:
+      - janus-smoke-data:/var/lib/janus
+
+volumes:
+  janus-smoke-data:

@@ -259,6 +259,14 @@ return `307 Temporary Redirect`; public SDKs follow the redirect and do not
 expose the intermediate Janus response. Endpoint URLs are intentionally public
 in direct mode, so deployments must apply origin authentication independently.
 
+The registry may be exposed as an authenticated online control plane while the
+daemon and data proxy remain local. Local agents publish service state using an
+agent credential; mobile clients enroll with a short-lived, single-use pairing
+code (shown as QR and copyable text) and receive a separate scoped credential.
+Clients can cache endpoint discovery and connect directly until the endpoint
+lease expires or transport fails. The online registry must not be hosted behind
+the same tunnel it is responsible for monitoring.
+
 Supported clients:
 
 - Go packages: `pkg/emitter` and `pkg/receiver`

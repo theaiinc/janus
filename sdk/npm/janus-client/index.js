@@ -7,16 +7,20 @@ class JanusError extends Error {
 }
 
 class Client {
-  constructor(baseURL, fetchImpl = globalThis.fetch) {
+  constructor(baseURL, fetchImpl = globalThis.fetch, apiKey = "") {
     if (typeof fetchImpl !== "function") throw new TypeError("fetch is required");
     this.baseURL = baseURL.replace(/\/+$/, "");
     this.fetch = fetchImpl;
+    this.apiKey = apiKey;
+    this.endpointCache = new Map();
   }
 
   async request(method, path, body, headers = {}) {
+    const requestHeaders = { ...headers };
+    if (this.apiKey) requestHeaders.authorization = `Bearer ${this.apiKey}`;
     const response = await this.fetch(this.baseURL + path, {
       method,
-      headers,
+      headers: requestHeaders,
       body,
       redirect: "follow",
     });
@@ -26,12 +30,37 @@ class Client {
     return response;
   }
 
+  async pair(code) {
+    const response = await this.request(
+      "POST",
+      "/api/auth/pairing/exchange",
+      JSON.stringify({ code: String(code).trim() }),
+      { "content-type": "application/json" },
+    );
+    const result = await response.json();
+    if (!result.apiKey) throw new JanusError(500, "pairing response did not include an API key");
+    this.apiKey = result.apiKey;
+    return result;
+  }
+
   async endpoint(namespace, alias) {
+    const key = `${namespace}\0${alias}`;
+    const cached = this.endpointCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.endpoint;
     const response = await this.request(
       "GET",
       `${this.aliasPath(namespace, alias)}/endpoint`,
     );
-    return response.json();
+    const endpoint = await response.json();
+    const expiresAt = endpoint.expiresAt
+      ? Date.parse(endpoint.expiresAt)
+      : Date.now() + 15000;
+    this.endpointCache.set(key, { endpoint, expiresAt });
+    return endpoint;
+  }
+
+  invalidateEndpoint(namespace, alias) {
+    this.endpointCache.delete(`${namespace}\0${alias}`);
   }
 
   requestEndpoint(endpoint, method, path, body, headers = {}) {

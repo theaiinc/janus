@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/theaiinc/janus/internal/auth"
 	"github.com/theaiinc/janus/internal/events"
 	"github.com/theaiinc/janus/internal/metrics"
 	"github.com/theaiinc/janus/internal/registry"
@@ -39,34 +40,68 @@ type AliasBackend interface {
 	DataPlaneMode() string
 }
 
+type Authenticator interface {
+	Enabled() bool
+	Authenticate(string) (string, bool)
+}
+
+type PairingAuthenticator interface {
+	Exchange(context.Context, string) (string, string, error)
+}
+
 type Server struct {
 	backend Backend
 	server  *http.Server
+	auth    Authenticator
 }
 
-func New(address string, backend Backend) *Server {
-	s := &Server{backend: backend}
+func New(address string, backend Backend, authenticators ...Authenticator) *Server {
+	var authenticator Authenticator = &disabledAuth{}
+	if len(authenticators) > 0 && authenticators[0] != nil {
+		authenticator = authenticators[0]
+	}
+	s := &Server{backend: backend, auth: authenticator}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/status", s.handleStatus)
-	mux.HandleFunc("GET /api/tunnels", s.handleTunnels)
-	mux.HandleFunc("GET /api/events", s.handleEvents)
+	mux.HandleFunc("GET /api/status", s.authenticated(s.handleStatus))
+	mux.HandleFunc("GET /api/tunnels", s.authenticated(s.handleTunnels))
+	mux.HandleFunc("GET /api/events", s.authenticated(s.handleEvents))
 	mux.HandleFunc("GET /api/metrics", s.handleMetrics)
 	mux.HandleFunc("GET /metrics", s.handleMetrics)
-	mux.HandleFunc("GET /api/services", s.handleServices)
-	mux.HandleFunc("POST /api/services", s.handleRegisterService)
-	mux.HandleFunc("GET /api/services/", s.handleServiceRoute)
-	mux.HandleFunc("DELETE /api/services/", s.handleServiceRoute)
-	mux.HandleFunc("POST /api/services/", s.handleServiceRoute)
+	mux.HandleFunc("GET /api/services", s.authenticated(s.handleServices))
+	mux.HandleFunc("POST /api/services", s.authenticated(s.handleRegisterService))
+	mux.HandleFunc("GET /api/services/", s.authenticated(s.handleServiceRoute))
+	mux.HandleFunc("DELETE /api/services/", s.authenticated(s.handleServiceRoute))
+	mux.HandleFunc("POST /api/services/", s.authenticated(s.handleServiceRoute))
 	mux.HandleFunc("/api/namespaces/", s.handleAliasRoute)
-	mux.HandleFunc("POST /api/restart/", s.handleRestart)
-	mux.HandleFunc("POST /api/recover/", s.handleRecover)
-	mux.HandleFunc("POST /api/reload", s.handleReload)
+	mux.HandleFunc("POST /api/auth/pairing/exchange", s.handlePairingExchange)
+	mux.HandleFunc("POST /api/pairing/exchange", s.handlePairingExchange)
+	mux.HandleFunc("POST /api/restart/", s.authenticated(s.handleRestart))
+	mux.HandleFunc("POST /api/recover/", s.authenticated(s.handleRecover))
+	mux.HandleFunc("POST /api/reload", s.authenticated(s.handleReload))
 	s.server = &http.Server{
 		Addr:              address,
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	return s
+}
+
+func (s *Server) authenticated(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.auth.Enabled() {
+			next(w, r)
+			return
+		}
+		raw := r.Header.Get("Authorization")
+		if strings.TrimSpace(raw) == "" {
+			raw = r.Header.Get("X-API-Key")
+		}
+		if _, ok := s.auth.Authenticate(raw); !ok {
+			writeError(w, http.StatusUnauthorized, "valid API key is required")
+			return
+		}
+		next(w, r)
+	}
 }
 
 type aliasView struct {
@@ -97,6 +132,16 @@ func (s *Server) handleAliasRoute(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		writeError(w, http.StatusBadRequest, "namespace and alias are required")
 		return
+	}
+	if s.auth.Enabled() {
+		tenant, authenticated := s.auth.Authenticate(r.Header.Get("Authorization"))
+		if !authenticated || strings.TrimSpace(r.Header.Get("Authorization")) == "" {
+			tenant, authenticated = s.auth.Authenticate(r.Header.Get("X-API-Key"))
+		}
+		if !authenticated || strings.ToLower(strings.TrimSpace(tenant)) != strings.ToLower(namespace) {
+			writeError(w, http.StatusUnauthorized, "valid API key for this tenant is required")
+			return
+		}
 	}
 	if action == "" && r.Method == http.MethodPut {
 		var request registry.RegisterRequest
@@ -168,6 +213,36 @@ func (s *Server) handleAliasRoute(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(response.StatusCode)
 	_, _ = io.Copy(w, response.Body)
 }
+
+func (s *Server) handlePairingExchange(w http.ResponseWriter, r *http.Request) {
+	authenticator, ok := s.auth.(PairingAuthenticator)
+	if !ok || !s.auth.Enabled() {
+		writeError(w, http.StatusNotFound, "pairing is unavailable")
+		return
+	}
+	var request struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil || strings.TrimSpace(request.Code) == "" {
+		writeError(w, http.StatusBadRequest, "pairing code is required")
+		return
+	}
+	key, tenant, err := authenticator.Exchange(r.Context(), request.Code)
+	if err != nil {
+		if errors.Is(err, auth.ErrPairingCodeUsed) {
+			writeError(w, http.StatusConflict, err.Error())
+		} else {
+			writeError(w, http.StatusUnauthorized, "invalid pairing code")
+		}
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"apiKey": key, "tenant": tenant})
+}
+
+type disabledAuth struct{}
+
+func (*disabledAuth) Enabled() bool                      { return false }
+func (*disabledAuth) Authenticate(string) (string, bool) { return "", true }
 
 func viewEndpoint(resolution registry.EndpointResolution) endpointView {
 	return endpointView{

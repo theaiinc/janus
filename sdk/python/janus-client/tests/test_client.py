@@ -46,6 +46,22 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(first.full_url, "http://janus.local/api/namespaces/team/aliases/events/endpoint")
         self.assertEqual(second.full_url, "https://tunnel.example/base/stream?x=1")
 
+    @patch("urllib.request.urlopen")
+    def test_pairing_and_endpoint_cache(self, urlopen):
+        urlopen.side_effect = [
+            Response({"apiKey": "mobile-key", "tenant": "team"}),
+            Response({"url": "https://tunnel.example", "expiresAt": "2099-01-01T00:00:00+00:00"}),
+            Response({"ok": True}),
+            Response({"ok": True}),
+        ]
+        receiver = Receiver("http://janus.local/")
+        result = receiver.client.pair("PAIR-CODE")
+        receiver.receive("team", "events", "one")
+        receiver.receive("team", "events", "two")
+        self.assertEqual(result["apiKey"], "mobile-key")
+        self.assertEqual(urlopen.call_args_list[0].args[0].full_url, "http://janus.local/api/auth/pairing/exchange")
+        self.assertEqual(len(urlopen.call_args_list), 4)
+
 
 if __name__ == "__main__":
     unittest.main()

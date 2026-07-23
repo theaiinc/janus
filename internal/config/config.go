@@ -37,12 +37,37 @@ func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
 
 type Config struct {
 	Server        ServerConfig        `yaml:"server"`
+	Auth          AuthConfig          `yaml:"auth"`
+	Onboarding    OnboardingConfig    `yaml:"onboarding"`
 	Registry      RegistryConfig      `yaml:"registry"`
 	DataPlane     DataPlaneConfig     `yaml:"dataPlane"`
 	Defaults      DefaultConfig       `yaml:"defaults"`
 	Notifications NotificationsConfig `yaml:"notifications"`
 	Services      []ServiceConfig     `yaml:"services"`
 	Tunnels       []TunnelConfig      `yaml:"tunnels"`
+}
+
+type AuthConfig struct {
+	Enabled      bool                `yaml:"enabled"`
+	StorePath    string              `yaml:"storePath"`
+	APIKeys      []APIKeyConfig      `yaml:"apiKeys"`
+	PairingCodes []PairingCodeConfig `yaml:"pairingCodes"`
+}
+
+type OnboardingConfig struct {
+	Enabled    bool     `yaml:"enabled"`
+	Tenant     string   `yaml:"tenant"`
+	PairingTTL Duration `yaml:"pairingTTL"`
+}
+
+type APIKeyConfig struct {
+	Key    string `yaml:"key"`
+	Tenant string `yaml:"tenant"`
+}
+
+type PairingCodeConfig struct {
+	Code   string `yaml:"code"`
+	Tenant string `yaml:"tenant"`
 }
 
 type ServerConfig struct {
@@ -168,6 +193,19 @@ func Parse(data []byte) (Config, error) {
 }
 
 func (c *Config) ApplyDefaults() {
+	if c.Onboarding.Tenant == "" {
+		c.Onboarding.Tenant = "default"
+	}
+	if c.Onboarding.PairingTTL.Duration == 0 {
+		c.Onboarding.PairingTTL.Duration = 10 * time.Minute
+	}
+	if c.Onboarding.Enabled {
+		c.Auth.Enabled = true
+	}
+	if key := strings.TrimSpace(os.Getenv("JANUS_API_KEY")); key != "" && len(c.Auth.APIKeys) == 0 {
+		c.Auth.Enabled = true
+		c.Auth.APIKeys = []APIKeyConfig{{Key: key, Tenant: firstEnv("JANUS_TENANT", "default")}}
+	}
 	if c.Server.Address == "" {
 		c.Server.Address = "127.0.0.1:8088"
 	}
@@ -209,6 +247,13 @@ func (c *Config) ApplyDefaults() {
 			c.Notifications.Webhooks[i].Provider = "webhook"
 		}
 	}
+}
+
+func firstEnv(name, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+		return value
+	}
+	return fallback
 }
 
 func applyHealthDefaults(h *HealthConfig) {
@@ -255,8 +300,23 @@ func mergeHealth(dst *HealthConfig, defaults HealthConfig) {
 }
 
 func (c Config) Validate() error {
-	if len(c.Tunnels) == 0 && len(c.Services) == 0 {
+	if len(c.Tunnels) == 0 && len(c.Services) == 0 && !c.Onboarding.Enabled {
 		return errors.New("at least one tunnel or service is required")
+	}
+	if c.Auth.Enabled {
+		if len(c.Auth.APIKeys) == 0 && len(c.Auth.PairingCodes) == 0 && !c.Onboarding.Enabled {
+			return errors.New("auth requires at least one api key or pairing code")
+		}
+		for i, key := range c.Auth.APIKeys {
+			if strings.TrimSpace(key.Key) == "" || strings.TrimSpace(key.Tenant) == "" {
+				return fmt.Errorf("auth.apiKeys[%d] requires key and tenant", i)
+			}
+		}
+		for i, code := range c.Auth.PairingCodes {
+			if strings.TrimSpace(code.Code) == "" || strings.TrimSpace(code.Tenant) == "" {
+				return fmt.Errorf("auth.pairingCodes[%d] requires code and tenant", i)
+			}
+		}
 	}
 	if c.DataPlane.Mode != "direct" && c.DataPlane.Mode != "proxy" && c.DataPlane.Mode != "auto" {
 		return fmt.Errorf("dataPlane.mode must be direct, proxy, or auto")

@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/theaiinc/janus/internal/auth"
 	"github.com/theaiinc/janus/internal/config"
 	"github.com/theaiinc/janus/internal/events"
 	"github.com/theaiinc/janus/internal/health"
@@ -27,17 +28,34 @@ type API interface {
 type App struct {
 	configPath string
 
-	mu        sync.RWMutex
-	cfg       config.Config
-	monitors  map[string]*Monitor
-	registry  *registry.Registry
-	events    *events.Recorder
-	notify    *notify.Manager
-	apiServer API
+	mu          sync.RWMutex
+	cfg         config.Config
+	monitors    map[string]*Monitor
+	registry    *registry.Registry
+	auth        *auth.Manager
+	pairingCode string
+	events      *events.Recorder
+	notify      *notify.Manager
+	apiServer   API
 }
 
 func New(cfg config.Config, configPath string) (*App, error) {
 	recorder := events.NewRecorder(1000)
+	var authStore auth.Store = auth.NewMemoryStore()
+	if cfg.Auth.StorePath != "" {
+		authStore = auth.NewFileStore(cfg.Auth.StorePath)
+	}
+	apiAuth, err := auth.New(cfg.Auth.Enabled, authKeys(cfg.Auth.APIKeys), authCodes(cfg.Auth.PairingCodes), authStore)
+	if err != nil {
+		return nil, err
+	}
+	var pairingCode string
+	if cfg.Onboarding.Enabled {
+		pairingCode, err = apiAuth.GeneratePairingCode(context.Background(), cfg.Onboarding.Tenant, cfg.Onboarding.PairingTTL.Duration)
+		if err != nil {
+			return nil, err
+		}
+	}
 	serviceRegistry, err := registry.New(
 		registry.NewFileStore(cfg.Registry.Path),
 		recorder,
@@ -47,18 +65,54 @@ func New(cfg config.Config, configPath string) (*App, error) {
 		return nil, err
 	}
 	app := &App{
-		configPath: configPath,
-		cfg:        cfg,
-		registry:   serviceRegistry,
-		events:     recorder,
-		notify:     notify.NewManager(cfg.Notifications),
-		monitors:   make(map[string]*Monitor),
+		configPath:  configPath,
+		cfg:         cfg,
+		auth:        apiAuth,
+		pairingCode: pairingCode,
+		registry:    serviceRegistry,
+		events:      recorder,
+		notify:      notify.NewManager(cfg.Notifications),
+		monitors:    make(map[string]*Monitor),
 	}
 	app.rebuildMonitors()
 	if err := app.loadConfiguredServices(context.Background(), cfg.Services); err != nil {
 		return nil, err
 	}
 	return app, nil
+}
+
+func (a *App) PairingCode() string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.pairingCode
+}
+
+func (a *App) Authenticator() *auth.Manager {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.auth
+}
+
+func (a *App) GeneratePairingCode(ctx context.Context, tenant string, ttl time.Duration) (string, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.auth.GeneratePairingCode(ctx, tenant, ttl)
+}
+
+func authKeys(in []config.APIKeyConfig) []auth.APIKey {
+	out := make([]auth.APIKey, len(in))
+	for i, key := range in {
+		out[i] = auth.APIKey{Key: key.Key, Tenant: key.Tenant}
+	}
+	return out
+}
+
+func authCodes(in []config.PairingCodeConfig) []auth.PairingCode {
+	out := make([]auth.PairingCode, len(in))
+	for i, code := range in {
+		out[i] = auth.PairingCode{Code: code.Code, Tenant: code.Tenant}
+	}
+	return out
 }
 
 func (a *App) SetAPIServer(server API) {

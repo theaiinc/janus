@@ -51,6 +51,12 @@ jobs:
       - name: Run Go vet
         run: go vet ./...
 
+      - name: Smoke test Docker image
+        run: |
+          docker compose -f docker-compose.smoke.yaml up -d --build
+          trap 'docker compose -f docker-compose.smoke.yaml down -v' EXIT
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:18088/api/status)" = "401"
+
       - name: Validate npm package
         run: |
           (cd sdk/npm/janus && npm pack --dry-run)

@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
+	"time"
 )
 
 type TransportMode string
@@ -22,13 +24,21 @@ const (
 type Client struct {
 	BaseURL string
 	HTTP    *http.Client
+	APIKey  string
+	mu      sync.Mutex
+	cache   map[string]cachedEndpoint
+}
+
+type cachedEndpoint struct {
+	endpoint Endpoint
+	expires  time.Time
 }
 
 func NewClient(baseURL string, client *http.Client) *Client {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	return &Client{BaseURL: strings.TrimRight(baseURL, "/"), HTTP: client}
+	return &Client{BaseURL: strings.TrimRight(baseURL, "/"), HTTP: client, cache: make(map[string]cachedEndpoint)}
 }
 
 func (c *Client) Do(ctx context.Context, method, path string, body io.Reader, contentType string) (*http.Response, error) {
@@ -38,6 +48,9 @@ func (c *Client) Do(ctx context.Context, method, path string, body io.Reader, co
 	}
 	if contentType != "" {
 		request.Header.Set("Content-Type", contentType)
+	}
+	if c.APIKey != "" {
+		request.Header.Set("Authorization", "Bearer "+c.APIKey)
 	}
 	response, err := c.HTTP.Do(request)
 	if err != nil {
@@ -49,6 +62,30 @@ func (c *Client) Do(ctx context.Context, method, path string, body io.Reader, co
 		return nil, fmt.Errorf("janus request failed (%d): %s", response.StatusCode, strings.TrimSpace(string(message)))
 	}
 	return response, nil
+}
+
+// Pair exchanges a one-time pairing code for a scoped mobile API key.
+func (c *Client) Pair(ctx context.Context, code string) (string, error) {
+	payload, err := json.Marshal(map[string]string{"code": strings.TrimSpace(code)})
+	if err != nil {
+		return "", err
+	}
+	response, err := c.Do(ctx, http.MethodPost, "/api/auth/pairing/exchange", bytes.NewReader(payload), "application/json")
+	if err != nil {
+		return "", err
+	}
+	defer response.Body.Close()
+	var result struct {
+		APIKey string `json:"apiKey"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(result.APIKey) == "" {
+		return "", fmt.Errorf("pairing response did not include an API key")
+	}
+	c.APIKey = result.APIKey
+	return result.APIKey, nil
 }
 
 type Registration struct {
@@ -122,6 +159,13 @@ func (c *Client) Resolve(ctx context.Context, namespace, alias string) (Alias, e
 }
 
 func (c *Client) ResolveEndpoint(ctx context.Context, namespace, alias string) (Endpoint, error) {
+	cacheKey := namespace + "\x00" + alias
+	c.mu.Lock()
+	if cached, ok := c.cache[cacheKey]; ok && time.Now().Before(cached.expires) {
+		c.mu.Unlock()
+		return cached.endpoint, nil
+	}
+	c.mu.Unlock()
 	response, err := c.Do(ctx, http.MethodGet, aliasPath(namespace, alias)+"/endpoint", nil, "")
 	if err != nil {
 		return Endpoint{}, err
@@ -131,7 +175,22 @@ func (c *Client) ResolveEndpoint(ctx context.Context, namespace, alias string) (
 	if err := json.NewDecoder(response.Body).Decode(&endpoint); err != nil {
 		return Endpoint{}, err
 	}
+	expiry := time.Now().Add(15 * time.Second)
+	if endpoint.ExpiresAt != "" {
+		if parsed, parseErr := time.Parse(time.RFC3339Nano, endpoint.ExpiresAt); parseErr == nil {
+			expiry = parsed
+		}
+	}
+	c.mu.Lock()
+	c.cache[cacheKey] = cachedEndpoint{endpoint: endpoint, expires: expiry}
+	c.mu.Unlock()
 	return endpoint, nil
+}
+
+func (c *Client) InvalidateEndpoint(namespace, alias string) {
+	c.mu.Lock()
+	delete(c.cache, namespace+"\x00"+alias)
+	c.mu.Unlock()
 }
 
 func (c *Client) DoEndpoint(ctx context.Context, endpoint Endpoint, method, path string, body io.Reader, contentType string) (*http.Response, error) {
@@ -151,6 +210,9 @@ func (c *Client) DoEndpoint(ctx context.Context, endpoint Endpoint, method, path
 	}
 	if contentType != "" {
 		request.Header.Set("Content-Type", contentType)
+	}
+	if c.APIKey != "" {
+		request.Header.Set("Authorization", "Bearer "+c.APIKey)
 	}
 	response, err := c.HTTP.Do(request)
 	if err != nil {

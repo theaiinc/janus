@@ -44,3 +44,24 @@ test("receiver resolves and connects directly", async () => {
   assert.equal(calls[1].url, "https://tunnel.example/base/stream?x=1");
   assert.equal(calls[1].options.redirect, "follow");
 });
+
+test("client pairs and reuses endpoint discovery", async () => {
+  const calls = [];
+  const fetchImpl = async (url, options) => {
+    calls.push({ url, options });
+    if (url.endsWith("/pairing/exchange")) {
+      return response(201, { apiKey: "mobile-key", tenant: "team" });
+    }
+    if (url.endsWith("/endpoint")) {
+      return response(200, { url: "https://tunnel.example", expiresAt: new Date(Date.now() + 60000).toISOString() });
+    }
+    return response(200, { ok: true });
+  };
+  const receiver = new Receiver("http://janus.local", fetchImpl);
+  const paired = await receiver.client.pair("PAIR-CODE");
+  assert.equal(paired.apiKey, "mobile-key");
+  await receiver.receive("team", "events", "one");
+  await receiver.receive("team", "events", "two");
+  assert.equal(calls.filter((call) => call.url.endsWith("/endpoint")).length, 1);
+  assert.equal(calls[1].options.headers.authorization, "Bearer mobile-key");
+});

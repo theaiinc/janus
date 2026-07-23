@@ -120,6 +120,30 @@ Janus serves these endpoints by default on `127.0.0.1:8088`:
 - `GET /api/namespaces/{namespace}/aliases/{alias}/endpoint`
 - `GET|POST|PUT|PATCH|DELETE /api/namespaces/{namespace}/aliases/{alias}/data/{path}`
 
+When API authentication is enabled, alias and endpoint routes require a tenant API
+key in `Authorization: Bearer <key>` or `X-API-Key`. A configured one-time pairing
+code can be exchanged at `POST /api/auth/pairing/exchange`; clients receive a
+separate scoped mobile API key and should not reuse agent credentials.
+
+The direct SDK flow resolves an endpoint once, caches it briefly, and sends
+subsequent requests directly to the selected tunnel. It refreshes discovery after
+cache expiry or transport failure. The registry remains a control plane and does
+not carry high-volume data traffic.
+
+## Docker smoke test
+
+Build and run the local container smoke fixture with:
+
+```sh
+docker compose -f docker-compose.smoke.yaml up --build
+docker compose -f docker-compose.smoke.yaml logs janus
+docker compose -f docker-compose.smoke.yaml down -v
+```
+
+The Docker configuration enables zero-configuration onboarding. On startup Janus
+prints a short-lived mobile pairing code; the mobile SDK exchanges that code for
+its scoped credential. No API key or YAML edit is required from the user.
+
 ## MCP Server
 
 Janus includes a stdio MCP server so agents can inspect and operate a running Janus daemon:

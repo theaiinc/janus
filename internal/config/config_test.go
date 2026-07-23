@@ -36,6 +36,30 @@ tunnels:
 	}
 }
 
+func TestParseAuthConfig(t *testing.T) {
+	cfg, err := Parse([]byte(`
+auth:
+  enabled: true
+  storePath: /tmp/janus-auth.json
+  apiKeys:
+    - key: team-secret
+      tenant: team
+  pairingCodes:
+    - code: pair-once
+      tenant: team
+tunnels:
+  - name: production
+    command: cloudflared tunnel run production
+`))
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	if !cfg.Auth.Enabled || cfg.Auth.StorePath != "/tmp/janus-auth.json" ||
+		cfg.Auth.APIKeys[0].Tenant != "team" || cfg.Auth.PairingCodes[0].Code != "pair-once" {
+		t.Fatalf("unexpected auth config: %#v", cfg.Auth)
+	}
+}
+
 func TestParseAcceptsDataPlaneModes(t *testing.T) {
 	for _, mode := range []string{"direct", "proxy", "auto"} {
 		cfg, err := Parse([]byte(`
