@@ -22,7 +22,6 @@ concurrency:
 jobs:
   publish:
     name: Publish npm and Python packages
-    environment: release
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -87,8 +86,10 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/janus
+          skip-existing: true
 
       - name: Publish theaiinc-janus-client
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/janus-client
+          skip-existing: true
