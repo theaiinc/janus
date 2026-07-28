@@ -1,0 +1,45 @@
+name: Deploy registry control plane
+
+on:
+  workflow_dispatch:
+
+# This is intentionally a preflight scaffold. Janus's registry is implemented
+# by the Go daemon, not a Cloudflare Worker, and this repository does not yet
+# contain a Cloudflare runtime, image registry, host, or Tunnel identifiers.
+permissions:
+  contents: read
+
+concurrency:
+  group: registry-deploy
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Validate deployment prerequisites
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      REGISTRY_HOSTNAME: janus.theaiinc.com
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_TUNNEL_ID: ${{ secrets.CLOUDFLARE_TUNNEL_ID }}
+      REGISTRY_RUNTIME_HOST: ${{ secrets.REGISTRY_RUNTIME_HOST }}
+    steps:
+      - name: Explain missing deployment target
+        run: |
+          set -eu
+          missing=0
+          for name in CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN CLOUDFLARE_TUNNEL_ID REGISTRY_RUNTIME_HOST; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing required secret: $name"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "No deployment was attempted."
+            exit 1
+          fi
+          echo "::notice::Target hostname is ${REGISTRY_HOSTNAME}."
+          echo "::notice::Deployment remains blocked until an external Go runtime and named Cloudflare Tunnel are provisioned."
+          echo "::notice::A Worker deployment is unsupported: no Worker entrypoint or routing-metadata storage exists in this repository."
+          exit 1

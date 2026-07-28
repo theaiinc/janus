@@ -87,7 +87,11 @@ func ValidateService(service ServiceRegistration) error {
 	if net.ParseIP(service.Hostname) != nil {
 		return fmt.Errorf("service %q hostname must be a DNS name", service.ID)
 	}
-	if _, err := url.ParseRequestURI("https://" + service.Hostname); err != nil {
+	parsedHostname, err := url.Parse("https://" + service.Hostname)
+	if err != nil || parsedHostname.Host != service.Hostname ||
+		parsedHostname.Port() != "" ||
+		parsedHostname.Path != "" || parsedHostname.RawQuery != "" ||
+		parsedHostname.Fragment != "" || parsedHostname.User != nil {
 		return fmt.Errorf("service %q hostname is invalid", service.ID)
 	}
 	if err := validateAbsoluteURL(service.LocalURL); err != nil {

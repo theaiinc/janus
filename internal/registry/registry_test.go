@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -116,6 +117,62 @@ func TestRegistryUnregister(t *testing.T) {
 	}
 	if _, err := registry.Get("grafana"); err != ErrNotFound {
 		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestRegistryPersistenceFailureRollsBackMutations(t *testing.T) {
+	store := &failingStore{err: errors.New("disk full")}
+	registry, err := New(store, events.NewRecorder(20), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := RegisterRequest{
+		Name: "events", Hostname: "events.example.com",
+		LocalURL: "http://127.0.0.1:3000",
+	}
+	if _, err := registry.Register(context.Background(), request); !errors.Is(err, store.err) {
+		t.Fatalf("expected register persistence error, got %v", err)
+	}
+	if _, err := registry.Get("events"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("failed register remained in memory: %v", err)
+	}
+
+	store.err = nil
+	if _, err := registry.Register(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	original, err := registry.Get("events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.err = errors.New("disk full")
+	updated := original
+	updated.Hostname = "updated.example.com"
+	if _, err := registry.Upsert(context.Background(), updated); !errors.Is(err, store.err) {
+		t.Fatalf("expected upsert persistence error, got %v", err)
+	}
+	restored, err := registry.Get("events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Hostname != original.Hostname {
+		t.Fatalf("failed upsert changed in-memory service: %q", restored.Hostname)
+	}
+	if err := registry.Unregister(context.Background(), "events"); !errors.Is(err, store.err) {
+		t.Fatalf("expected unregister persistence error, got %v", err)
+	}
+	if _, err := registry.Get("events"); err != nil {
+		t.Fatalf("failed unregister removed in-memory service: %v", err)
+	}
+}
+
+func TestValidateServiceRejectsHostnameURLComponents(t *testing.T) {
+	service := ServiceRegistration{
+		ID: "events", Name: "events", Namespace: "team", Alias: "events",
+		Hostname: "events.example.com/path", LocalURL: "http://127.0.0.1:3000",
+	}
+	if err := ValidateService(service); err == nil {
+		t.Fatal("expected hostname path to be rejected")
 	}
 }
 
@@ -268,4 +325,16 @@ func statusServer(t *testing.T, status int) *httptest.Server {
 	}))
 	t.Cleanup(server.Close)
 	return server
+}
+
+type failingStore struct {
+	err error
+}
+
+func (*failingStore) Load(context.Context) ([]ServiceRegistration, error) {
+	return nil, nil
+}
+
+func (s *failingStore) Save(context.Context, []ServiceRegistration) error {
+	return s.err
 }

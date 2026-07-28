@@ -94,6 +94,9 @@ func (r *Registry) Register(ctx context.Context, request RegisterRequest) (Servi
 	r.mu.Unlock()
 
 	if err := r.persist(ctx, services); err != nil {
+		r.mu.Lock()
+		delete(r.services, service.ID)
+		r.mu.Unlock()
 		return ServiceRegistration{}, err
 	}
 	r.record(EventServiceRegistered, service.ID, "service registered", map[string]string{"hostname": service.Hostname})
@@ -110,8 +113,14 @@ func (r *Registry) Upsert(ctx context.Context, service ServiceRegistration) (Ser
 	service.UpdatedAt = time.Now().UTC()
 
 	r.mu.Lock()
-	if existing, ok := r.services[service.ID]; ok && !existing.CreatedAt.IsZero() {
-		service.CreatedAt = existing.CreatedAt
+	var previous ServiceRegistration
+	var hadPrevious bool
+	if existing, ok := r.services[service.ID]; ok {
+		previous = cloneService(existing)
+		hadPrevious = true
+		if !existing.CreatedAt.IsZero() {
+			service.CreatedAt = existing.CreatedAt
+		}
 	}
 	if existing, ok := r.findAliasLocked(service.Namespace, service.Alias); ok && existing.ID != service.ID {
 		r.mu.Unlock()
@@ -122,6 +131,13 @@ func (r *Registry) Upsert(ctx context.Context, service ServiceRegistration) (Ser
 	r.mu.Unlock()
 
 	if err := r.persist(ctx, services); err != nil {
+		r.mu.Lock()
+		if hadPrevious {
+			r.services[service.ID] = previous
+		} else {
+			delete(r.services, service.ID)
+		}
+		r.mu.Unlock()
 		return ServiceRegistration{}, err
 	}
 	r.record(EventServiceRegistered, service.ID, "service registered", map[string]string{"hostname": service.Hostname})
@@ -140,6 +156,9 @@ func (r *Registry) Unregister(ctx context.Context, id string) error {
 	r.mu.Unlock()
 
 	if err := r.persist(ctx, services); err != nil {
+		r.mu.Lock()
+		r.services[id] = cloneService(service)
+		r.mu.Unlock()
 		return err
 	}
 	r.record(EventServiceRemoved, id, "service removed", map[string]string{"hostname": service.Hostname})
@@ -317,6 +336,9 @@ func (r *Registry) Refresh(ctx context.Context, id string) (ServiceRegistration,
 
 	r.emitChanges(previous, updated)
 	if err := r.persist(ctx, services); err != nil {
+		r.mu.Lock()
+		r.services[id] = cloneService(previous)
+		r.mu.Unlock()
 		return ServiceRegistration{}, err
 	}
 	return cloneService(updated), nil
