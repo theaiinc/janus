@@ -2,7 +2,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "janus-registry",
   "main": "src/index.js",
-  "compatibility_date": "2026-07-29",
+  "compatibility_date": "2026-07-28",
   "compatibility_flags": ["nodejs_compat"],
   "routes": [
     {

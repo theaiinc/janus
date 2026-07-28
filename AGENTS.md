@@ -29,3 +29,4 @@
 - Aha: Remote daemon credentials are identity-bound and namespace ownership is persisted separately from registrations; first claim wins, and normal registration, upsert, heartbeat, and key rotation cannot transfer ownership.
 - Aha: The central registry now has a separate `worker/` Durable Object implementation and Wrangler deployment path. It stores routing metadata only and never proxies service traffic; the local Go daemon remains the authoritative supervisor and continues operating when remote advertisement is unavailable.
 - Aha: Cloudflare free-plan Durable Object migrations require `new_sqlite_classes` rather than `new_classes` for the `Registry` class in `worker/wrangler.jsonc`.
+- Aha: Cloudflare validates Wrangler compatibility dates against the deployment service's UTC date; do not configure a future date when local time has already crossed into the next day.
