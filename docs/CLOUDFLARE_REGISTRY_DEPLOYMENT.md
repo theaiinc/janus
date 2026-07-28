@@ -43,6 +43,8 @@ GitHub Actions secrets are:
 
 The Cloudflare account must allow Durable Objects and the `worker/wrangler.jsonc`
 custom-domain route provisions `janus.theaiinc.com` for this Worker. The
+initial migration uses `new_sqlite_classes` for `Registry`, which is required
+for Durable Objects on Cloudflare's free plan.
 Cloudflare token needs only the account's Worker script/route deployment
 permissions (plus the account and zone identifiers needed by Wrangler). The
 first operational step after deployment is
