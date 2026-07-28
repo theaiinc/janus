@@ -26,6 +26,7 @@ jobs:
   deploy:
     name: Deploy Durable Object registry
     needs: test
+    environment: release
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
