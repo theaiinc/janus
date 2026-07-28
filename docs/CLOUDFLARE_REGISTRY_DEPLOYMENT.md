@@ -41,16 +41,19 @@ GitHub Actions secrets are:
 - `CLOUDFLARE_API_TOKEN` (least privilege; no global API key)
 - `JANUS_BOOTSTRAP_SECRET`
 
-The Cloudflare account must allow Durable Objects and the Worker hostname
-must be routed to this Worker. The first operational step after deployment is
+The Cloudflare account must allow Durable Objects and the `worker/wrangler.jsonc`
+custom-domain route provisions `janus.theaiinc.com` for this Worker. The
+Cloudflare token needs only the account's Worker script/route deployment
+permissions (plus the account and zone identifiers needed by Wrangler). The
+first operational step after deployment is
 to generate a daemon pairing code with the bootstrap route, exchange it, and
 store the returned API key in the local daemon configuration. Do not put the
 bootstrap secret or returned API keys in source control.
 
 Run locally with `npm run test:worker`. Use `npx wrangler@latest dev
 --config worker/wrangler.jsonc` for an isolated local Worker. Production
-deployments should add a custom domain or route in the Cloudflare dashboard
-or Wrangler environment as appropriate.
+deployments use the versioned custom-domain route in `worker/wrangler.jsonc`;
+no tunnel is involved.
 
 ## Limitations
 
