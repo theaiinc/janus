@@ -40,13 +40,33 @@ type AliasBackend interface {
 	DataPlaneMode() string
 }
 
+type AliasUpsertBackend interface {
+	UpsertAlias(context.Context, registry.RegisterRequest) (registry.ServiceRegistration, error)
+}
+
 type Authenticator interface {
 	Enabled() bool
 	Authenticate(string) (string, bool)
 }
 
+type credentialAuthenticator interface {
+	AuthenticateCredential(string) (auth.Credential, bool)
+}
+
+type namespaceAuthorizer interface {
+	AuthorizeNamespace(string, string, string) bool
+}
+
+type namespaceClaimer interface {
+	ClaimNamespace(context.Context, string, string) error
+}
+
 type PairingAuthenticator interface {
 	Exchange(context.Context, string) (string, string, error)
+}
+
+type DaemonKeyRotator interface {
+	RotateDaemonKey(context.Context, string, string) (string, string, error)
 }
 
 type Server struct {
@@ -75,6 +95,7 @@ func New(address string, backend Backend, authenticators ...Authenticator) *Serv
 	mux.HandleFunc("/api/namespaces/", s.handleAliasRoute)
 	mux.HandleFunc("POST /api/auth/pairing/exchange", s.handlePairingExchange)
 	mux.HandleFunc("POST /api/pairing/exchange", s.handlePairingExchange)
+	mux.HandleFunc("POST /api/auth/daemon/rotate", s.handleDaemonKeyRotation)
 	mux.HandleFunc("POST /api/restart/", s.authenticated(s.handleRestart))
 	mux.HandleFunc("POST /api/recover/", s.authenticated(s.handleRecover))
 	mux.HandleFunc("POST /api/reload", s.authenticated(s.handleReload))
@@ -100,8 +121,56 @@ func (s *Server) authenticated(next http.HandlerFunc) http.HandlerFunc {
 			writeError(w, http.StatusUnauthorized, "valid API key is required")
 			return
 		}
+		if credentialAuth, ok := s.auth.(credentialAuthenticator); ok {
+			credential, credentialOK := credentialAuth.AuthenticateCredential(raw)
+			if !credentialOK || (credential.Scope == "daemon" &&
+				(strings.TrimSpace(credential.Identity) == "" ||
+					!strings.EqualFold(credential.Identity, strings.TrimSpace(r.Header.Get("X-Janus-Agent-ID"))))) {
+				writeError(w, http.StatusUnauthorized, "valid API key for this daemon is required")
+				return
+			}
+		}
 		next(w, r)
 	}
+}
+
+func (s *Server) claimDaemonNamespace(ctx context.Context, r *http.Request, namespace string) error {
+	if !s.auth.Enabled() {
+		return nil
+	}
+	claimer, ok := s.auth.(namespaceClaimer)
+	credentialAuth, credentialOK := s.auth.(credentialAuthenticator)
+	if !ok || !credentialOK {
+		return nil
+	}
+	raw := r.Header.Get("Authorization")
+	if strings.TrimSpace(raw) == "" {
+		raw = r.Header.Get("X-API-Key")
+	}
+	credential, authenticated := credentialAuth.AuthenticateCredential(raw)
+	if !authenticated || credential.Scope != "daemon" {
+		return nil
+	}
+	if !strings.EqualFold(strings.TrimSpace(credential.Tenant), strings.TrimSpace(namespace)) {
+		return auth.ErrNamespaceTenant
+	}
+	return claimer.ClaimNamespace(ctx, namespace, credential.Identity)
+}
+
+func (s *Server) authorizeNamespace(r *http.Request, namespace string) bool {
+	if !s.auth.Enabled() {
+		return true
+	}
+	raw := r.Header.Get("Authorization")
+	if strings.TrimSpace(raw) == "" {
+		raw = r.Header.Get("X-API-Key")
+	}
+	authorizer, ok := s.auth.(namespaceAuthorizer)
+	if !ok {
+		tenant, authenticated := s.auth.Authenticate(raw)
+		return authenticated && strings.EqualFold(strings.TrimSpace(tenant), strings.TrimSpace(namespace))
+	}
+	return authorizer.AuthorizeNamespace(raw, namespace, r.Header.Get("X-Janus-Agent-ID"))
 }
 
 type aliasView struct {
@@ -134,12 +203,24 @@ func (s *Server) handleAliasRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.auth.Enabled() {
-		tenant, authenticated := s.auth.Authenticate(r.Header.Get("Authorization"))
-		if !authenticated || strings.TrimSpace(r.Header.Get("Authorization")) == "" {
-			tenant, authenticated = s.auth.Authenticate(r.Header.Get("X-API-Key"))
+		raw := r.Header.Get("Authorization")
+		if strings.TrimSpace(raw) == "" {
+			raw = r.Header.Get("X-API-Key")
 		}
-		if !authenticated || strings.ToLower(strings.TrimSpace(tenant)) != strings.ToLower(namespace) {
-			writeError(w, http.StatusUnauthorized, "valid API key for this tenant is required")
+		_, authenticated := s.auth.Authenticate(raw)
+		if credentialAuth, ok := s.auth.(credentialAuthenticator); ok {
+			credential, credentialOK := credentialAuth.AuthenticateCredential(raw)
+			if !credentialOK {
+				authenticated = false
+			}
+			if credential.Scope == "daemon" &&
+				(strings.TrimSpace(credential.Identity) == "" ||
+					!strings.EqualFold(strings.TrimSpace(credential.Identity), strings.TrimSpace(r.Header.Get("X-Janus-Agent-ID")))) {
+				authenticated = false
+			}
+		}
+		if !authenticated || !s.authorizeNamespace(r, namespace) {
+			writeError(w, http.StatusUnauthorized, "valid API key for this namespace and daemon is required")
 			return
 		}
 	}
@@ -151,7 +232,22 @@ func (s *Server) handleAliasRoute(w http.ResponseWriter, r *http.Request) {
 		}
 		request.Namespace = namespace
 		request.Alias = alias
-		service, err := backend.RegisterAlias(r.Context(), request)
+		if err := s.claimDaemonNamespace(r.Context(), r, namespace); err != nil {
+			writeAPIError(w, err)
+			return
+		}
+		var service registry.ServiceRegistration
+		var err error
+		if r.URL.Query().Get("upsert") == "true" {
+			upserter, supported := backend.(AliasUpsertBackend)
+			if !supported {
+				writeError(w, http.StatusNotImplemented, "alias upsert unavailable")
+				return
+			}
+			service, err = upserter.UpsertAlias(r.Context(), request)
+		} else {
+			service, err = backend.RegisterAlias(r.Context(), request)
+		}
 		if err != nil {
 			writeAPIError(w, err)
 			return
@@ -239,6 +335,40 @@ func (s *Server) handlePairingExchange(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]string{"apiKey": key, "tenant": tenant})
 }
 
+func (s *Server) handleDaemonKeyRotation(w http.ResponseWriter, r *http.Request) {
+	rotator, ok := s.auth.(DaemonKeyRotator)
+	if !ok || !s.auth.Enabled() {
+		writeError(w, http.StatusNotFound, "daemon key rotation is unavailable")
+		return
+	}
+	raw := r.Header.Get("Authorization")
+	if strings.TrimSpace(raw) == "" {
+		raw = r.Header.Get("X-API-Key")
+	}
+	if _, authenticated := s.auth.Authenticate(raw); !authenticated {
+		writeError(w, http.StatusUnauthorized, "valid daemon API key is required")
+		return
+	}
+	var request struct {
+		DaemonID string `json:"daemonId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil || strings.TrimSpace(request.DaemonID) == "" {
+		writeError(w, http.StatusBadRequest, "daemonId is required")
+		return
+	}
+	key, tenant, err := rotator.RotateDaemonKey(r.Context(), raw, request.DaemonID)
+	if err != nil {
+		switch {
+		case errors.Is(err, auth.ErrInvalidCredentials), errors.Is(err, auth.ErrDaemonCredential), errors.Is(err, auth.ErrDaemonIdentity):
+			writeError(w, http.StatusUnauthorized, err.Error())
+		default:
+			writeError(w, http.StatusInternalServerError, "daemon key rotation failed")
+		}
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"apiKey": key, "tenant": tenant, "daemonId": request.DaemonID})
+}
+
 type disabledAuth struct{}
 
 func (*disabledAuth) Enabled() bool                      { return false }
@@ -312,7 +442,7 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	statuses := s.backend.Statuses()
-	services := s.backend.Services()
+	services := s.visibleServices(r, s.backend.Services())
 	healthy := true
 	for _, status := range statuses {
 		if status.State != tunnel.StateHealthy {
@@ -348,13 +478,34 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleServices(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.backend.Services())
+	writeJSON(w, http.StatusOK, s.visibleServices(r, s.backend.Services()))
+}
+
+func (s *Server) visibleServices(r *http.Request, services []registry.ServiceRegistration) []registry.ServiceRegistration {
+	if !s.auth.Enabled() {
+		return services
+	}
+	visible := make([]registry.ServiceRegistration, 0, len(services))
+	for _, service := range services {
+		if s.authorizeNamespace(r, service.Namespace) {
+			visible = append(visible, service)
+		}
+	}
+	return visible
 }
 
 func (s *Server) handleRegisterService(w http.ResponseWriter, r *http.Request) {
 	var request registry.RegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if !s.authorizeNamespace(r, request.Namespace) {
+		writeError(w, http.StatusUnauthorized, "valid API key for this namespace and daemon is required")
+		return
+	}
+	if err := s.claimDaemonNamespace(r.Context(), r, request.Namespace); err != nil {
+		writeAPIError(w, err)
 		return
 	}
 	service, err := s.backend.RegisterService(r.Context(), request)
@@ -379,14 +530,32 @@ func (s *Server) handleServiceRoute(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, err)
 			return
 		}
+		if !s.authorizeNamespace(r, service.Namespace) {
+			writeError(w, http.StatusNotFound, "service not found")
+			return
+		}
 		writeJSON(w, http.StatusOK, service)
 	case r.Method == http.MethodDelete && action == "":
+		service, err := s.backend.Service(id)
+		if err != nil {
+			writeAPIError(w, err)
+			return
+		}
+		if !s.authorizeNamespace(r, service.Namespace) {
+			writeError(w, http.StatusNotFound, "service not found")
+			return
+		}
 		if err := s.backend.UnregisterService(r.Context(), id); err != nil {
 			writeAPIError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusAccepted, map[string]string{"status": "service removed", "id": id})
 	case r.Method == http.MethodGet && action == "health":
+		service, err := s.backend.Service(id)
+		if err != nil || !s.authorizeNamespace(r, service.Namespace) {
+			writeError(w, http.StatusNotFound, "service not found")
+			return
+		}
 		health, err := s.backend.ServiceHealth(id)
 		if err != nil {
 			writeAPIError(w, err)
@@ -394,6 +563,11 @@ func (s *Server) handleServiceRoute(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, health)
 	case r.Method == http.MethodGet && action == "tunnels":
+		service, err := s.backend.Service(id)
+		if err != nil || !s.authorizeNamespace(r, service.Namespace) {
+			writeError(w, http.StatusNotFound, "service not found")
+			return
+		}
 		tunnels, err := s.backend.ServiceTunnels(id)
 		if err != nil {
 			writeAPIError(w, err)
@@ -401,6 +575,19 @@ func (s *Server) handleServiceRoute(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, tunnels)
 	case r.Method == http.MethodPost && action == "refresh":
+		service, lookupErr := s.backend.Service(id)
+		if lookupErr != nil {
+			writeAPIError(w, lookupErr)
+			return
+		}
+		if !s.authorizeNamespace(r, service.Namespace) {
+			writeError(w, http.StatusNotFound, "service not found")
+			return
+		}
+		if err := s.claimDaemonNamespace(r.Context(), r, service.Namespace); err != nil {
+			writeAPIError(w, err)
+			return
+		}
 		service, err := s.backend.RefreshService(r.Context(), id)
 		if err != nil {
 			writeAPIError(w, err)
@@ -480,6 +667,10 @@ func writeAPIError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, registry.ErrAlreadyExists):
 		writeError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, auth.ErrNamespaceOwned):
+		writeError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, auth.ErrNamespaceTenant):
+		writeError(w, http.StatusUnauthorized, err.Error())
 	default:
 		writeError(w, http.StatusBadRequest, err.Error())
 	}

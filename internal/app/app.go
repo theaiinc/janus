@@ -34,6 +34,7 @@ type App struct {
 	registry    *registry.Registry
 	auth        *auth.Manager
 	pairingCode string
+	remote      *registry.RemoteClient
 	events      *events.Recorder
 	notify      *notify.Manager
 	apiServer   API
@@ -48,6 +49,11 @@ func New(cfg config.Config, configPath string) (*App, error) {
 	apiAuth, err := auth.New(cfg.Auth.Enabled, authKeys(cfg.Auth.APIKeys), authCodes(cfg.Auth.PairingCodes), authStore)
 	if err != nil {
 		return nil, err
+	}
+	for _, namespace := range cfg.Auth.Namespaces {
+		if err := apiAuth.ConfigureNamespace(context.Background(), namespace.Name, namespace.Visibility == "private", namespace.OwnerIdentity); err != nil {
+			return nil, err
+		}
 	}
 	var pairingCode string
 	if cfg.Onboarding.Enabled {
@@ -78,6 +84,13 @@ func New(cfg config.Config, configPath string) (*App, error) {
 	if err := app.loadConfiguredServices(context.Background(), cfg.Services); err != nil {
 		return nil, err
 	}
+	if cfg.Registry.RemoteURL != "" {
+		remote, remoteErr := registry.NewRemoteClientForIdentity(cfg.Registry.RemoteURL, cfg.Registry.RemoteAPIKey, cfg.Registry.RemoteDaemonID, nil)
+		if remoteErr != nil {
+			return nil, remoteErr
+		}
+		app.remote = remote
+	}
 	return app, nil
 }
 
@@ -102,7 +115,7 @@ func (a *App) GeneratePairingCode(ctx context.Context, tenant string, ttl time.D
 func authKeys(in []config.APIKeyConfig) []auth.APIKey {
 	out := make([]auth.APIKey, len(in))
 	for i, key := range in {
-		out[i] = auth.APIKey{Key: key.Key, Tenant: key.Tenant}
+		out[i] = auth.APIKey{Key: key.Key, Tenant: key.Tenant, Scope: key.Scope, Identity: key.Identity}
 	}
 	return out
 }
@@ -110,7 +123,7 @@ func authKeys(in []config.APIKeyConfig) []auth.APIKey {
 func authCodes(in []config.PairingCodeConfig) []auth.PairingCode {
 	out := make([]auth.PairingCode, len(in))
 	for i, code := range in {
-		out[i] = auth.PairingCode{Code: code.Code, Tenant: code.Tenant}
+		out[i] = auth.PairingCode{Code: code.Code, Tenant: code.Tenant, Scope: code.Scope, Identity: code.Identity}
 	}
 	return out
 }
@@ -132,6 +145,9 @@ func (a *App) Run(ctx context.Context) error {
 	}
 	if a.registry != nil {
 		a.registry.Start(ctx)
+	}
+	if a.remote != nil {
+		go a.remoteLoop(ctx)
 	}
 
 	errCh := make(chan error, 1)
@@ -183,7 +199,11 @@ func (a *App) Service(id string) (registry.ServiceRegistration, error) {
 }
 
 func (a *App) RegisterService(ctx context.Context, request registry.RegisterRequest) (registry.ServiceRegistration, error) {
-	return a.registry.Register(ctx, request)
+	service, err := a.registry.Register(ctx, request)
+	if err == nil {
+		go a.advertiseService(context.Background(), service)
+	}
+	return service, err
 }
 
 func (a *App) UnregisterService(ctx context.Context, id string) error {
@@ -203,7 +223,19 @@ func (a *App) RefreshService(ctx context.Context, id string) (registry.ServiceRe
 }
 
 func (a *App) RegisterAlias(ctx context.Context, request registry.RegisterRequest) (registry.ServiceRegistration, error) {
-	return a.registry.Register(ctx, request)
+	service, err := a.registry.Register(ctx, request)
+	if err == nil {
+		go a.advertiseService(context.Background(), service)
+	}
+	return service, err
+}
+
+func (a *App) UpsertAlias(ctx context.Context, request registry.RegisterRequest) (registry.ServiceRegistration, error) {
+	service, err := a.registry.Upsert(ctx, request.ToRegistration(time.Now().UTC()))
+	if err == nil {
+		go a.advertiseService(context.Background(), service)
+	}
+	return service, err
 }
 
 func (a *App) Alias(namespace, alias string) (registry.ServiceRegistration, error) {
@@ -277,6 +309,62 @@ func (a *App) Config() config.Config {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.cfg
+}
+
+func (a *App) advertiseService(ctx context.Context, service registry.ServiceRegistration) {
+	a.mu.RLock()
+	remote := a.remote
+	a.mu.RUnlock()
+	if remote == nil {
+		return
+	}
+	advertiseCtx, cancel := registry.RemoteContext(ctx)
+	defer cancel()
+	if err := remote.Advertise(advertiseCtx, service); err != nil {
+		a.events.Add(events.TypeWarning, service.ID, "remote registry advertisement failed", map[string]string{"error": err.Error()})
+	}
+}
+
+func (a *App) remoteLoop(ctx context.Context) {
+	a.mu.RLock()
+	interval := a.cfg.Registry.AdvertiseInterval.Duration
+	remote := a.remote
+	a.mu.RUnlock()
+	if remote == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	a.advertiseAll(ctx, remote)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			a.heartbeatAll(ctx, remote)
+		}
+	}
+}
+
+func (a *App) advertiseAll(ctx context.Context, remote *registry.RemoteClient) {
+	advertiseCtx, cancel := registry.RemoteContext(ctx)
+	defer cancel()
+	services := a.Services()
+	if err := remote.AdvertiseAll(advertiseCtx, services); err != nil {
+		a.events.Add(events.TypeWarning, "", "remote registry advertisement failed", map[string]string{"error": err.Error()})
+	}
+}
+
+func (a *App) heartbeatAll(ctx context.Context, remote *registry.RemoteClient) {
+	services := a.Services()
+	heartbeatCtx, heartbeatCancel := registry.RemoteContext(ctx)
+	defer heartbeatCancel()
+	if err := remote.HeartbeatAll(heartbeatCtx, services); err != nil {
+		a.events.Add(events.TypeWarning, "", "remote registry heartbeat failed", map[string]string{"error": err.Error()})
+	}
 }
 
 func (a *App) monitor(id string) (*Monitor, error) {

@@ -1,10 +1,27 @@
 server:
   address: 127.0.0.1:8088
 
+auth:
+  enabled: true
+  # Private namespaces are invisible to generic discovery.
+  namespaces:
+    - name: household
+      visibility: private
+      ownerIdentity: daemon-home
+  pairingCodes:
+    - code: replace-with-one-time-code
+      tenant: household
+      scope: namespace
+
 registry:
   path: janus.registry.json
   refreshInterval: 30s
   timeout: 5s
+  # Optional online control plane. Keep the API key in JANUS_REGISTRY_API_KEY.
+  remoteUrl: ""
+  remoteApiKey: ""
+  remoteDaemonId: ""
+  advertiseInterval: 30s
 
 dataPlane:
   # direct returns 307 redirects to the selected Cloudflared endpoint.

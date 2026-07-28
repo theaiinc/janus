@@ -1,6 +1,6 @@
 {
   "name": "janus-repository",
-  "version": "0.1.0",
+  "version": "0.1.3",
   "private": true,
   "description": "The intelligent guardian for Cloudflared tunnels.",
   "license": "MIT",

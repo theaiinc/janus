@@ -52,6 +52,13 @@ type AuthConfig struct {
 	StorePath    string              `yaml:"storePath"`
 	APIKeys      []APIKeyConfig      `yaml:"apiKeys"`
 	PairingCodes []PairingCodeConfig `yaml:"pairingCodes"`
+	Namespaces   []NamespaceConfig   `yaml:"namespaces"`
+}
+
+type NamespaceConfig struct {
+	Name          string `yaml:"name"`
+	Visibility    string `yaml:"visibility"`
+	OwnerIdentity string `yaml:"ownerIdentity"`
 }
 
 type OnboardingConfig struct {
@@ -61,13 +68,17 @@ type OnboardingConfig struct {
 }
 
 type APIKeyConfig struct {
-	Key    string `yaml:"key"`
-	Tenant string `yaml:"tenant"`
+	Key      string `yaml:"key"`
+	Tenant   string `yaml:"tenant"`
+	Scope    string `yaml:"scope"`
+	Identity string `yaml:"identity"`
 }
 
 type PairingCodeConfig struct {
-	Code   string `yaml:"code"`
-	Tenant string `yaml:"tenant"`
+	Code     string `yaml:"code"`
+	Tenant   string `yaml:"tenant"`
+	Scope    string `yaml:"scope"`
+	Identity string `yaml:"identity"`
 }
 
 type ServerConfig struct {
@@ -75,9 +86,13 @@ type ServerConfig struct {
 }
 
 type RegistryConfig struct {
-	Path            string   `yaml:"path"`
-	RefreshInterval Duration `yaml:"refreshInterval"`
-	Timeout         Duration `yaml:"timeout"`
+	Path              string   `yaml:"path"`
+	RefreshInterval   Duration `yaml:"refreshInterval"`
+	Timeout           Duration `yaml:"timeout"`
+	RemoteURL         string   `yaml:"remoteUrl"`
+	RemoteAPIKey      string   `yaml:"remoteApiKey"`
+	RemoteDaemonID    string   `yaml:"remoteDaemonId"`
+	AdvertiseInterval Duration `yaml:"advertiseInterval"`
 }
 
 type DataPlaneConfig struct {
@@ -218,6 +233,15 @@ func (c *Config) ApplyDefaults() {
 	if c.Registry.Timeout.Duration == 0 {
 		c.Registry.Timeout.Duration = 5 * time.Second
 	}
+	if c.Registry.AdvertiseInterval.Duration == 0 {
+		c.Registry.AdvertiseInterval.Duration = 30 * time.Second
+	}
+	if c.Registry.RemoteURL == "" {
+		c.Registry.RemoteURL = strings.TrimSpace(os.Getenv("JANUS_REGISTRY_URL"))
+	}
+	if c.Registry.RemoteAPIKey == "" {
+		c.Registry.RemoteAPIKey = strings.TrimSpace(os.Getenv("JANUS_REGISTRY_API_KEY"))
+	}
 	if c.DataPlane.Mode == "" {
 		c.DataPlane.Mode = "direct"
 	}
@@ -303,6 +327,15 @@ func (c Config) Validate() error {
 	if len(c.Tunnels) == 0 && len(c.Services) == 0 && !c.Onboarding.Enabled {
 		return errors.New("at least one tunnel or service is required")
 	}
+	if strings.TrimSpace(c.Registry.RemoteURL) != "" && strings.TrimSpace(c.Registry.RemoteAPIKey) == "" {
+		return errors.New("registry.remoteApiKey is required when registry.remoteUrl is configured")
+	}
+	if strings.TrimSpace(c.Registry.RemoteURL) != "" && strings.TrimSpace(c.Registry.RemoteDaemonID) == "" {
+		return errors.New("registry.remoteDaemonId is required when registry.remoteUrl is configured")
+	}
+	if strings.TrimSpace(c.Registry.RemoteDaemonID) != "" && strings.TrimSpace(c.Registry.RemoteURL) == "" {
+		return errors.New("registry.remoteDaemonId requires registry.remoteUrl")
+	}
 	if c.Auth.Enabled {
 		if len(c.Auth.APIKeys) == 0 && len(c.Auth.PairingCodes) == 0 && !c.Onboarding.Enabled {
 			return errors.New("auth requires at least one api key or pairing code")
@@ -311,10 +344,27 @@ func (c Config) Validate() error {
 			if strings.TrimSpace(key.Key) == "" || strings.TrimSpace(key.Tenant) == "" {
 				return fmt.Errorf("auth.apiKeys[%d] requires key and tenant", i)
 			}
+			if strings.EqualFold(strings.TrimSpace(key.Scope), "daemon") && strings.TrimSpace(key.Identity) == "" {
+				return fmt.Errorf("auth.apiKeys[%d] daemon scope requires identity", i)
+			}
 		}
 		for i, code := range c.Auth.PairingCodes {
 			if strings.TrimSpace(code.Code) == "" || strings.TrimSpace(code.Tenant) == "" {
 				return fmt.Errorf("auth.pairingCodes[%d] requires code and tenant", i)
+			}
+			if strings.EqualFold(strings.TrimSpace(code.Scope), "daemon") && strings.TrimSpace(code.Identity) == "" {
+				return fmt.Errorf("auth.pairingCodes[%d] daemon scope requires identity", i)
+			}
+		}
+		for i, namespace := range c.Auth.Namespaces {
+			if strings.TrimSpace(namespace.Name) == "" {
+				return fmt.Errorf("auth.namespaces[%d].name is required", i)
+			}
+			if namespace.Visibility != "" && namespace.Visibility != "public" && namespace.Visibility != "private" {
+				return fmt.Errorf("auth.namespaces[%d].visibility must be public or private", i)
+			}
+			if namespace.Visibility == "private" && strings.TrimSpace(namespace.OwnerIdentity) == "" {
+				return fmt.Errorf("auth.namespaces[%d].ownerIdentity is required for private namespaces", i)
 			}
 		}
 	}

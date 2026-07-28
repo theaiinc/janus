@@ -64,10 +64,19 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          RELEASE_COMMIT: ${{ github.sha }}
         run: |
           mkdir -p dist
           output="dist/janus-${{ matrix.target }}${{ matrix.extension }}"
-          go build -trimpath -ldflags="-s -w" -o "$output" ./cmd/janus
+          version="${RELEASE_TAG#v}"
+          cli_package="github.com/theaiinc/janus/internal/cli"
+          ldflags="-s -w"
+          ldflags+=" -X $cli_package.version=$version"
+          ldflags+=" -X $cli_package.commit=$RELEASE_COMMIT"
+          go build -trimpath \
+            -ldflags="$ldflags" \
+            -o "$output" ./cmd/janus
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
@@ -86,6 +95,10 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+
+      - name: Generate release checksums
+        working-directory: dist
+        run: sha256sum janus-* > checksums.txt
 
       - name: Publish GitHub release
         env:

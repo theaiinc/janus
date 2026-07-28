@@ -14,6 +14,7 @@ import (
 	"github.com/theaiinc/janus/internal/app"
 	"github.com/theaiinc/janus/internal/config"
 	"github.com/theaiinc/janus/internal/mcp"
+	"github.com/theaiinc/janus/internal/update"
 )
 
 var (
@@ -34,8 +35,29 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(mcpCommand())
 	root.AddCommand(pairingCodeCommand(&configPath))
 	root.AddCommand(validateConfigCommand(&configPath))
+	root.AddCommand(updateCommand())
 	root.AddCommand(versionCommand())
 	return root
+}
+
+func updateCommand() *cobra.Command {
+	var releaseVersion string
+	cmd := &cobra.Command{
+		Use:   "update",
+		Short: "Download and install a verified Janus release",
+		Long:  "Download and install a verified Janus release. The release must include checksums.txt and match this platform.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := update.Update(cmd.Context(), update.Options{Version: releaseVersion}); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "janus updated to %s; restart the daemon to use it\n", releaseVersion)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&releaseVersion, "version", "", "release version to install, for example 0.1.3")
+	_ = cmd.MarkFlagRequired("version")
+	return cmd
 }
 
 func pairingCodeCommand(configPath *string) *cobra.Command {

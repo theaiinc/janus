@@ -15,7 +15,19 @@ Janus is a lightweight Go daemon that supervises Cloudflared tunnels, monitors o
 go test ./...
 go run ./cmd/janus validate-config --config janus.example.yaml
 go run ./cmd/janus run --config janus.example.yaml
+go run ./cmd/janus update --version 0.1.3
 ```
+
+`janus update --version VERSION` downloads the matching release binary for the
+current platform, verifies it against the release's `checksums.txt`, and
+replaces the current executable. Restart the daemon after updating. Releases
+must be created by the tag-triggered release workflow; ordinary branch pushes
+do not publish binaries. Windows cannot replace a running executable, so stop
+Janus and install the downloaded release manually; the npm and Python wrappers
+can fetch a release after their package version is published.
+
+The updater authenticates downloads with HTTPS and SHA-256 checksums, but the
+repository does not currently sign checksums with a separate release key.
 
 ## Configuration
 
@@ -116,6 +128,7 @@ Janus serves these endpoints by default on `127.0.0.1:8088`:
 - `GET /api/services/{id}/tunnels`
 - `POST /api/services/{id}/refresh`
 - `PUT /api/namespaces/{namespace}/aliases/{alias}`
+- `PUT /api/namespaces/{namespace}/aliases/{alias}?upsert=true`
 - `GET /api/namespaces/{namespace}/aliases/{alias}`
 - `GET /api/namespaces/{namespace}/aliases/{alias}/endpoint`
 - `GET|POST|PUT|PATCH|DELETE /api/namespaces/{namespace}/aliases/{alias}/data/{path}`
@@ -124,11 +137,45 @@ When API authentication is enabled, alias and endpoint routes require a tenant A
 key in `Authorization: Bearer <key>` or `X-API-Key`. A configured one-time pairing
 code can be exchanged at `POST /api/auth/pairing/exchange`; clients receive a
 separate scoped mobile API key and should not reuse agent credentials.
+`POST /api/auth/daemon/rotate` replaces a daemon-scoped key and requires the
+current key plus `{"daemonId":"..."}`. The identity must match the credential;
+there is no unauthenticated bootstrap rotation path.
+
+Namespaces are public by default. Configure a private namespace under
+`auth.namespaces` with `visibility: private` and its `ownerIdentity`:
+
+```yaml
+auth:
+  namespaces:
+    - name: household
+      visibility: private
+      ownerIdentity: daemon-home
+  pairingCodes:
+    - code: one-time-client-code
+      tenant: household
+      scope: namespace
+```
+
+Private namespaces are omitted from generic service and status discovery.
+Access requires the owner daemon key with the matching `X-Janus-Agent-ID`, or
+a one-time pairing code exchanged for a namespace-scoped key. Tenant-matching
+keys without either scope cannot discover or access the namespace. Namespace
+ownership and visibility are persisted in the auth store and survive reloads.
 
 The direct SDK flow resolves an endpoint once, caches it briefly, and sends
 subsequent requests directly to the selected tunnel. It refreshes discovery after
 cache expiry or transport failure. The registry remains a control plane and does
 not carry high-volume data traffic.
+
+### Online registry advertisement
+
+A local daemon can mirror its configured and runtime services to an online Janus
+registry. Set `registry.remoteUrl` and keep `registry.remoteApiKey` in
+`JANUS_REGISTRY_API_KEY`; the daemon advertises namespace/alias records at
+startup and refreshes them on `registry.advertiseInterval`. Remote failures are
+reported as daemon events and do not stop local service supervision.
+Configure `registry.remoteDaemonId` for rotation and replace the stored key only
+after the registry confirms success.
 
 ## Docker smoke test
 

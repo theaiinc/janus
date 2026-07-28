@@ -47,6 +47,10 @@ auth:
   pairingCodes:
     - code: pair-once
       tenant: team
+  namespaces:
+    - name: private
+      visibility: private
+      ownerIdentity: daemon-1
 tunnels:
   - name: production
     command: cloudflared tunnel run production
@@ -55,7 +59,8 @@ tunnels:
 		t.Fatalf("Parse returned error: %v", err)
 	}
 	if !cfg.Auth.Enabled || cfg.Auth.StorePath != "/tmp/janus-auth.json" ||
-		cfg.Auth.APIKeys[0].Tenant != "team" || cfg.Auth.PairingCodes[0].Code != "pair-once" {
+		cfg.Auth.APIKeys[0].Tenant != "team" || cfg.Auth.PairingCodes[0].Code != "pair-once" ||
+		cfg.Auth.Namespaces[0].OwnerIdentity != "daemon-1" {
 		t.Fatalf("unexpected auth config: %#v", cfg.Auth)
 	}
 }
@@ -158,6 +163,52 @@ services:
 	}
 	if cfg.Registry.RefreshInterval.Duration != 15*time.Second {
 		t.Fatalf("unexpected registry interval: %s", cfg.Registry.RefreshInterval.Duration)
+	}
+}
+
+func TestParseRemoteRegistryConfig(t *testing.T) {
+	cfg, err := Parse([]byte(`
+registry:
+  remoteUrl: https://registry.example.com
+  remoteApiKey: agent-secret
+  remoteDaemonId: daemon-a
+  advertiseInterval: 45s
+services:
+  - service:
+      name: grafana
+    local:
+      url: http://localhost:3000
+    public:
+      hostname: grafana.example.com
+    tunnels:
+      - id: primary
+        url: https://abc123.trycloudflare.com
+`))
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	if cfg.Registry.RemoteURL != "https://registry.example.com" ||
+		cfg.Registry.RemoteAPIKey != "agent-secret" ||
+		cfg.Registry.RemoteDaemonID != "daemon-a" ||
+		cfg.Registry.AdvertiseInterval.Duration != 45*time.Second {
+		t.Fatalf("unexpected remote registry config: %#v", cfg.Registry)
+	}
+}
+
+func TestParseRejectsRemoteRegistryWithoutAPIKey(t *testing.T) {
+	_, err := Parse([]byte(`
+registry:
+  remoteUrl: https://registry.example.com
+services:
+  - service:
+      name: grafana
+    local:
+      url: http://localhost:3000
+    public:
+      hostname: grafana.example.com
+`))
+	if err == nil || !strings.Contains(err.Error(), "remoteApiKey") {
+		t.Fatalf("expected remote API key error, got %v", err)
 	}
 }
 

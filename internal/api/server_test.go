@@ -112,6 +112,10 @@ func (f *fakeBackend) RegisterAlias(_ context.Context, request registry.Register
 	return service, f.err
 }
 
+func (f *fakeBackend) UpsertAlias(ctx context.Context, request registry.RegisterRequest) (registry.ServiceRegistration, error) {
+	return f.RegisterAlias(ctx, request)
+}
+
 func (f *fakeBackend) Alias(namespace, alias string) (registry.ServiceRegistration, error) {
 	for _, service := range f.services {
 		if service.Namespace == namespace && service.Alias == alias {
@@ -313,6 +317,18 @@ func TestServerAliasRoutesHideEndpointDetails(t *testing.T) {
 	server.Handler().ServeHTTP(dataResponse, data)
 	if dataResponse.Code != http.StatusOK || dataResponse.Body.String() != "payload" {
 		t.Fatalf("unexpected alias data response: %d %q", dataResponse.Code, dataResponse.Body.String())
+	}
+}
+
+func TestServerAliasUpsertRoute(t *testing.T) {
+	backend := &fakeBackend{services: make(map[string]registry.ServiceRegistration)}
+	server := New("127.0.0.1:0", backend)
+	request := httptest.NewRequest(http.MethodPut, "/api/namespaces/team/aliases/events?upsert=true",
+		strings.NewReader(`{"name":"events","hostname":"events.janus.dev","localUrl":"http://origin"}`))
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("expected alias upsert 201, got %d: %s", response.Code, response.Body.String())
 	}
 }
 
