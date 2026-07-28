@@ -1,50 +1,62 @@
 # Cloudflare registry deployment
 
-## Current state
+The central registry is a separate Cloudflare Worker in `worker/`. The local
+Go daemon remains the supervisor and local registry; its optional
+`RemoteClient` advertises registrations and sends heartbeats to this Worker.
 
-No existing GitHub Actions workflow deploys a registry to
-`janus.theaiinc.com`. `ci.yml`, `release.yml`, and `publish.yml` only verify
-code, build GitHub Release binaries, and publish SDK packages. There is no
-Wrangler configuration or Worker entrypoint.
+## Runtime design
 
-The registry is currently an in-process component of the Go daemon
-(`internal/registry`). `docker-compose.cloudflare.yaml` runs that daemon in a
-container, but does not provision a host, Cloudflare Tunnel, DNS record, or
-Cloudflare API credentials.
+`worker/src/index.js` uses one named Durable Object (`Registry`) as the
+strongly consistent registry boundary. Its JSON state contains services,
+hashed credentials, one-time pairing records, namespace owners, and private
+namespace flags. This is intentionally a single small control-plane object;
+it stores routing metadata only and never proxies service traffic.
 
-## Added scaffold
+Supported compatibility routes include:
 
-`.github/workflows/deploy-registry.yml` is a manual, fail-closed preflight
-workflow. It does not deploy, publish an image, modify DNS, or expose secrets.
-It deliberately stops after checking the inputs needed for a future
-tunnel-backed deployment.
+- `PUT /api/namespaces/{namespace}/aliases/{alias}?upsert=true` advertisement
+- `POST /api/services/{id}/refresh` heartbeat
+- `GET /api/namespaces/{namespace}/aliases/{alias}` discovery
+- `GET /api/namespaces/{namespace}/aliases/{alias}/endpoint` direct endpoint
+- `POST /api/auth/pairing/exchange` one-time credential exchange
+- `POST /api/auth/daemon/rotate` daemon-scoped atomic key rotation
 
-Required GitHub Actions secrets:
+Pairing-code generation is a Worker-only bootstrap route:
+`POST /api/auth/pairing`, protected by `X-Janus-Bootstrap-Secret`. Pairing
+codes are short-lived and single-use. Daemon credentials are tenant- and
+identity-bound; first registration claims a namespace, and another daemon
+cannot impersonate that owner. Private namespaces require the owner daemon or
+a namespace-scoped credential.
 
-- `CLOUDFLARE_ACCOUNT_ID`: Cloudflare account containing the named Tunnel.
-- `CLOUDFLARE_API_TOKEN`: least-privilege token for the eventual Tunnel/DNS
-  configuration step; do not use a global API key.
-- `CLOUDFLARE_TUNNEL_ID`: the existing named Tunnel that will route the
-  hostname.
-- `REGISTRY_RUNTIME_HOST`: external compute host or deployment target where
-  the Go daemon will run. This is metadata for the future deployment and is
-  not used to connect by the scaffold.
+The endpoint route returns the selected Cloudflared URL as direct-mode
+routing metadata. There is deliberately no `/data` proxy route in the Worker.
 
-Required Cloudflare resources:
+## Deploy
 
-1. A compute host capable of running the Janus Go daemon and persistent
-   writable storage for its registry/auth JSON files.
-2. A named Cloudflare Tunnel and a `janus.theaiinc.com` hostname route to the
-   daemon's HTTP port (`8088`).
-3. DNS managed in the same Cloudflare account, with the hostname attached to
-   the Tunnel.
-4. A deliberate Janus auth/tenant configuration and a separately managed
-   registry API key for remote daemon advertisement, if remote daemons will
-   publish to this registry.
+The manual `.github/workflows/deploy-registry.yml` runs focused Worker tests,
+deploys `worker/wrangler.jsonc`, and writes the bootstrap secret. Required
+GitHub Actions secrets are:
 
-The deployment target is therefore a tunnel-backed Go daemon, not a Worker.
-Cloudflare Tunnel provides ingress, but does not run the Go process. A Worker
-would require a new Worker API implementation plus a storage choice (for
-example D1, KV, or Durable Objects) for routing metadata; none is present in
-this repository. The scaffold must be replaced with a real deployment job
-only after those runtime and resource decisions are made.
+- `CLOUDFLARE_ACCOUNT_ID`
+- `CLOUDFLARE_API_TOKEN` (least privilege; no global API key)
+- `JANUS_BOOTSTRAP_SECRET`
+
+The Cloudflare account must allow Durable Objects and the Worker hostname
+must be routed to this Worker. The first operational step after deployment is
+to generate a daemon pairing code with the bootstrap route, exchange it, and
+store the returned API key in the local daemon configuration. Do not put the
+bootstrap secret or returned API keys in source control.
+
+Run locally with `npm run test:worker`. Use `npx wrangler@latest dev
+--config worker/wrangler.jsonc` for an isolated local Worker. Production
+deployments should add a custom domain or route in the Cloudflare dashboard
+or Wrangler environment as appropriate.
+
+## Limitations
+
+The first Worker implementation trusts tunnel health/status metadata supplied
+by the daemon; it does not probe private origins or Cloudflared URLs from the
+edge. It also uses a single global Durable Object, which is deliberately
+simple but can become a throughput bottleneck at large scale. Namespace
+listing and administrative revocation are not exposed yet. The local Go
+daemon remains fully functional when this remote control plane is unavailable.

@@ -24,6 +24,8 @@
     "build": "go build ./cmd/janus",
     "mcp": "go run ./cmd/janus mcp",
     "test": "go test ./...",
+    "test:worker": "node --test worker/test/*.test.js",
+    "deploy:registry": "wrangler deploy --config worker/wrangler.jsonc",
     "test:js": "node --test sdk/npm/*/*.test.js sdk/npm/janus/bin/*.test.js",
     "test:python": "python -m unittest discover -s sdk/python/janus-client/tests && python -m unittest discover -s sdk/python/janus/tests"
   },
