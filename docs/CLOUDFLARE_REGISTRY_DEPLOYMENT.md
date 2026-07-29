@@ -42,12 +42,15 @@ GitHub Actions secrets are:
 - `CLOUDFLARE_API_TOKEN` (least privilege; no global API key)
 - `JANUS_BOOTSTRAP_SECRET`
 
-The Cloudflare account must allow Durable Objects and the `worker/wrangler.jsonc`
-custom-domain route provisions `janus.theaiinc.com` for this Worker. The
-initial migration uses `new_sqlite_classes` for `Registry`, which is required
-for Durable Objects on Cloudflare's free plan.
-Cloudflare token needs only the account's Worker script/route deployment
-permissions (plus the account and zone identifiers needed by Wrangler). The
+The Cloudflare account must allow Durable Objects. The custom-domain mapping for
+`janus.theaiinc.com` is managed manually in Cloudflare and is intentionally not
+declared in `worker/wrangler.jsonc`; deployments therefore do not require route
+API permissions and do not alter the existing mapping. If the mapping is
+recreated, point it at the `janus-registry` Worker. The initial migration uses
+`new_sqlite_classes` for `Registry`, which is required for Durable Objects on
+Cloudflare's free plan.
+The Cloudflare token needs only the account's Worker script deployment
+permissions (plus the account identifier needed by Wrangler). The
 first operational step after deployment is
 to generate a daemon pairing code with the bootstrap route, send it with the
 tenant and daemon ID to `/api/auth/daemon/enroll`, and
@@ -58,8 +61,8 @@ the daemon.
 
 Run locally with `npm run test:worker`. Use `npx wrangler@latest dev
 --config worker/wrangler.jsonc` for an isolated local Worker. Production
-deployments use the versioned custom-domain route in `worker/wrangler.jsonc`;
-no tunnel is involved.
+deployments update the Worker only; the manually managed custom-domain mapping
+continues routing `janus.theaiinc.com` to it. No tunnel is involved.
 
 ## Limitations
 
