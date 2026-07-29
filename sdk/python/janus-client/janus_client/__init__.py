@@ -51,6 +51,20 @@ class Client:
         self.api_key = result["apiKey"]
         return result
 
+    def discover(self, namespace="", alias="", query=""):
+        params = {}
+        if namespace:
+            params["namespace"] = namespace
+        if alias:
+            params["alias"] = alias
+        if query:
+            params["q"] = query
+        path = "/api/discovery"
+        if params:
+            path += "?" + urllib.parse.urlencode(params)
+        response = self.request("GET", path)
+        return json.loads(response.read()).get("services", [])
+
     def endpoint(self, namespace, alias):
         key = (namespace, alias)
         cached = self._endpoint_cache.get(key)
@@ -93,8 +107,8 @@ class Client:
 
 
 class Emitter:
-    def __init__(self, base_url, mode="direct"):
-        self.client = Client(base_url)
+    def __init__(self, base_url, mode="direct", api_key=""):
+        self.client = Client(base_url, api_key=api_key)
         self.mode = mode
 
     def register(self, namespace, alias, registration=None):
@@ -122,8 +136,8 @@ class Emitter:
 
 
 class Receiver:
-    def __init__(self, base_url, mode="direct"):
-        self.client = Client(base_url)
+    def __init__(self, base_url, mode="direct", api_key=""):
+        self.client = Client(base_url, api_key=api_key)
         self.mode = mode
 
     def resolve(self, namespace, alias):

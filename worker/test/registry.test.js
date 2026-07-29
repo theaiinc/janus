@@ -65,3 +65,49 @@ test("enrolls only the paired daemon and consumes the code once", async () => {
   const replay = await call(registry, "POST", "/api/auth/daemon/enroll", { tenant: "team", daemonId: "daemon-a", code });
   assert.equal(replay.status, 401);
 });
+
+test("discovers public services across daemons and protects private namespaces", async () => {
+  const h = harness();
+  const registry = new Registry(h.state, h.env);
+  async function pair(tenant, daemonId, extra = {}) {
+    const pairing = await call(registry, "POST", "/api/auth/pairing", {
+      tenant, daemonId, ...extra,
+    }, { "X-Janus-Bootstrap-Secret": "bootstrap" });
+    const { code } = await pairing.json();
+    const exchange = await call(registry, "POST", "/api/auth/pairing/exchange", { code });
+    const { apiKey } = await exchange.json();
+    return { authorization: `Bearer ${apiKey}`, "X-Janus-Agent-ID": daemonId };
+  }
+  const teamAuth = await pair("team", "daemon-team");
+  const otherAuth = await pair("other", "daemon-other");
+  const publicService = await call(registry, "PUT", "/api/namespaces/other/aliases/public?upsert=true", {
+    name: "public", hostname: "public.example.com", localUrl: "http://127.0.0.1:3001",
+    tunnels: [{ id: "other-tunnel", url: "https://public.example.com" }],
+  }, otherAuth);
+  assert.equal(publicService.status, 201);
+  const discovery = await call(registry, "GET", "/api/discovery?q=public", undefined, teamAuth);
+  assert.equal(discovery.status, 200);
+  assert.equal((await discovery.json()).services[0].endpoint.url, "https://public.example.com");
+  const publicEndpoint = await call(registry, "GET", "/api/namespaces/other/aliases/public/endpoint", undefined, teamAuth);
+  assert.equal(publicEndpoint.status, 200);
+
+  const privateAuth = await pair("private", "daemon-private", { private: true });
+  const privateService = await call(registry, "PUT", "/api/namespaces/private/aliases/secret?upsert=true", {
+    name: "secret", hostname: "secret.example.com", localUrl: "http://127.0.0.1:3002",
+  }, privateAuth);
+  assert.equal(privateService.status, 201);
+  const hidden = await call(registry, "GET", "/api/discovery?namespace=private", undefined, teamAuth);
+  assert.deepEqual((await hidden.json()).services, []);
+  const hiddenEndpoint = await call(registry, "GET", "/api/namespaces/private/aliases/secret/endpoint", undefined, teamAuth);
+  assert.equal(hiddenEndpoint.status, 404);
+  const namespacePairing = await call(registry, "POST", "/api/auth/pairing", {
+    tenant: "private", scope: "namespace", private: true,
+  }, { "X-Janus-Bootstrap-Secret": "bootstrap" });
+  const { code } = await namespacePairing.json();
+  const namespaceExchange = await call(registry, "POST", "/api/auth/pairing/exchange", { code });
+  const { apiKey } = await namespaceExchange.json();
+  const visible = await call(registry, "GET", "/api/discovery?namespace=private", undefined, {
+    authorization: `Bearer ${apiKey}`,
+  });
+  assert.equal((await visible.json()).services[0].alias, "secret");
+});

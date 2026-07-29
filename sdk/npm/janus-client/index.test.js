@@ -65,3 +65,15 @@ test("client pairs and reuses endpoint discovery", async () => {
   assert.equal(calls.filter((call) => call.url.endsWith("/endpoint")).length, 1);
   assert.equal(calls[1].options.headers.authorization, "Bearer mobile-key");
 });
+
+test("client discovers services across namespaces", async () => {
+  let request;
+  const fetchImpl = async (url, options) => {
+    request = { url, options };
+    return response(200, { services: [{ namespace: "other", alias: "events", endpoint: { url: "https://events.example" } }] });
+  };
+  const receiver = new Receiver("https://registry.example", fetchImpl);
+  const services = await receiver.client.discover({ query: "events" });
+  assert.equal(services[0].namespace, "other");
+  assert.equal(request.url, "https://registry.example/api/discovery?q=events");
+});

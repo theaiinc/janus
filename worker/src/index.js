@@ -39,6 +39,10 @@ export class Registry {
     }
     if (!auth) return error(401, "valid API key is required");
 
+    if ((url.pathname === "/api/discovery" || url.pathname === "/api/namespaces") &&
+        request.method === "GET") {
+      return this.discovery(url, state, auth);
+    }
     const alias = parseAlias(url.pathname);
     if (alias) return this.aliasRoute(request, url, state, auth, alias);
     const service = parseService(url.pathname);
@@ -52,15 +56,19 @@ export class Registry {
       return error(401, "valid bootstrap secret is required");
     }
     const body = await bodyJSON(request);
-    if (!body?.tenant || !body?.daemonId) return error(400, "tenant and daemonId are required");
+    const scope = body.scope === "namespace" ? "namespace" : "daemon";
+    const daemonId = String(body.daemonId || "").trim();
+    if (!body?.tenant || (scope === "daemon" && !daemonId)) {
+      return error(400, scope === "daemon" ? "tenant and daemonId are required" : "tenant is required");
+    }
     const code = randomCode();
     state.pairings[await hash(code)] = {
-      tenant: normalize(body.tenant), scope: "daemon", identity: String(body.daemonId),
+      tenant: normalize(body.tenant), scope, identity: scope === "daemon" ? daemonId : "",
       expiresAt: Date.now() + Math.min(Number(body.ttlSeconds) || 600, 3600) * 1000,
     };
     if (body.private === true) state.privateNamespaces[normalize(body.tenant)] = true;
     await this.save(state);
-    return json({ code, tenant: normalize(body.tenant), daemonId: String(body.daemonId) }, 201);
+    return json({ code, tenant: normalize(body.tenant), scope, ...(daemonId ? { daemonId } : {}) }, 201);
   }
 
   async exchange(request, state) {
@@ -103,10 +111,26 @@ export class Registry {
     return json({ apiKey: replacement, tenant: auth.credential.tenant, daemonId }, 201);
   }
 
+  async discovery(url, state, auth) {
+    const namespace = normalize(url.searchParams.get("namespace"));
+    const alias = normalize(url.searchParams.get("alias"));
+    const query = normalize(url.searchParams.get("q"));
+    const services = Object.values(state.services)
+      .filter((service) => !namespace || service.namespace === namespace)
+      .filter((service) => !alias || service.alias === alias)
+      .filter((service) => !query || [service.namespace, service.alias, service.name, service.hostname]
+        .some((value) => normalize(value).includes(query)))
+      .filter((service) => canReadNamespace(state, auth, service.namespace))
+      .map(discoveryView);
+    return json({ services });
+  }
+
   async aliasRoute(request, url, state, auth, { namespace, alias, action }) {
-    if (!authorizedNamespace(state, auth, namespace, request)) return error(401, "valid API key for this namespace and daemon is required");
     const key = `${namespace}/${alias}`;
     if (request.method === "PUT" && !action) {
+      if (!canWriteNamespace(state, auth, namespace)) {
+        return error(401, "valid API key for this namespace and daemon is required");
+      }
       const input = await bodyJSON(request);
       const service = normalizeService({ ...input, namespace, alias });
       if (service.error) return error(400, service.error);
@@ -119,6 +143,7 @@ export class Registry {
     }
     const service = state.services[key];
     if (!service) return error(404, "service not found");
+    if (!canReadNamespace(state, auth, namespace)) return error(404, "service not found");
     if (request.method === "GET" && !action) return json(aliasView(service));
     if (request.method === "GET" && action === "endpoint") {
       const endpoint = resolveEndpoint(service);
@@ -130,7 +155,7 @@ export class Registry {
   async serviceRoute(request, state, auth, { id, action }) {
     const service = Object.values(state.services).find((item) => item.id === id);
     if (!service) return error(404, "service not found");
-    if (!authorizedNamespace(state, auth, service.namespace, request)) return error(404, "service not found");
+    if (!canReadNamespace(state, auth, service.namespace)) return error(404, "service not found");
     if (request.method === "POST" && action === "refresh") {
       service.updatedAt = new Date().toISOString();
       await this.save(state);
@@ -176,11 +201,16 @@ async function authenticate(request, state) {
   if (credential.scope === "daemon" && credential.identity !== request.headers.get("X-Janus-Agent-ID")) return null;
   return { hash: credentialHash, credential, ...credential };
 }
-function authorizedNamespace(state, auth, namespace, request) {
-  if (auth.credential.tenant !== namespace) return false;
+function canReadNamespace(state, auth, namespace) {
   if (!state.privateNamespaces[namespace]) return true;
+  if (auth.credential.tenant !== namespace) return false;
   if (auth.scope === "namespace") return true;
   return auth.scope === "daemon" && state.owners[namespace] === auth.identity;
+}
+function canWriteNamespace(state, auth, namespace) {
+  return auth.scope === "daemon" &&
+    auth.credential.tenant === namespace &&
+    (!state.owners[namespace] || state.owners[namespace] === auth.identity);
 }
 function claimOwner(state, namespace, auth) {
   if (auth.scope !== "daemon") return null;
@@ -201,6 +231,10 @@ function normalizeService(input) {
 }
 function mergeService(previous, next) { return previous ? { ...previous, ...next, createdAt: previous.createdAt, updatedAt: new Date().toISOString() } : next; }
 function aliasView(service) { return { namespace: service.namespace, alias: service.alias, name: service.name, hostname: service.hostname, health: service.health }; }
+function discoveryView(service) {
+  const endpoint = resolveEndpoint(service);
+  return { ...aliasView(service), endpoint: endpoint || null, updatedAt: service.updatedAt };
+}
 function resolveEndpoint(service) {
   const endpoints = [...service.tunnels].sort((a, b) => (a.id === service.activeTunnel ? -1 : b.id === service.activeTunnel ? 1 : 0));
   const endpoint = endpoints.find((item) => item.status === "healthy" || item.status === "unknown");

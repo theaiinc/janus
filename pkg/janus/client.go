@@ -113,6 +113,18 @@ type Alias struct {
 	Health    Health `json:"health"`
 }
 
+type DiscoveryService struct {
+	Alias
+	Endpoint  *Endpoint `json:"endpoint,omitempty"`
+	UpdatedAt string    `json:"updatedAt,omitempty"`
+}
+
+type DiscoveryOptions struct {
+	Namespace string
+	Alias     string
+	Query     string
+}
+
 type Endpoint struct {
 	URL          string   `json:"url"`
 	ID           string   `json:"id"`
@@ -156,6 +168,35 @@ func (c *Client) Resolve(ctx context.Context, namespace, alias string) (Alias, e
 		return Alias{}, err
 	}
 	return result, nil
+}
+
+func (c *Client) Discover(ctx context.Context, options DiscoveryOptions) ([]DiscoveryService, error) {
+	query := url.Values{}
+	if options.Namespace != "" {
+		query.Set("namespace", options.Namespace)
+	}
+	if options.Alias != "" {
+		query.Set("alias", options.Alias)
+	}
+	if options.Query != "" {
+		query.Set("q", options.Query)
+	}
+	path := "/api/discovery"
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	response, err := c.Do(ctx, http.MethodGet, path, nil, "")
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	var result struct {
+		Services []DiscoveryService `json:"services"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	return result.Services, nil
 }
 
 func (c *Client) ResolveEndpoint(ctx context.Context, namespace, alias string) (Endpoint, error) {
