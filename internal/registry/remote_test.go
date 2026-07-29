@@ -62,6 +62,37 @@ func TestRemoteClientRequiresCredentials(t *testing.T) {
 	}
 }
 
+func TestRemoteClientEnrollsAndPersistsCredential(t *testing.T) {
+	var current string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/auth/daemon/enroll" || r.Header.Get("Authorization") != "" {
+			t.Fatalf("unexpected enrollment request")
+		}
+		current = "janus_enrolled"
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"apiKey":"janus_enrolled"}`))
+	}))
+	defer server.Close()
+	path := t.TempDir() + "/remote.json"
+	client, err := NewRemoteClientForEnrollment(server.URL, "team", "daemon-a", "ABCD-1234", path, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Enroll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if current == "" {
+		t.Fatal("enrollment request was not made")
+	}
+	reloaded, err := NewRemoteClientForEnrollment(server.URL, "team", "daemon-a", "", path, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reloaded.Enroll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRemoteClientSendsDaemonIdentity(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("X-Janus-Agent-ID"); got != "daemon-1" {

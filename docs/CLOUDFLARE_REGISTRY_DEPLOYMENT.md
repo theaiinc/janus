@@ -19,6 +19,7 @@ Supported compatibility routes include:
 - `GET /api/namespaces/{namespace}/aliases/{alias}` discovery
 - `GET /api/namespaces/{namespace}/aliases/{alias}/endpoint` direct endpoint
 - `POST /api/auth/pairing/exchange` one-time credential exchange
+- `POST /api/auth/daemon/enroll` one-time daemon credential enrollment
 - `POST /api/auth/daemon/rotate` daemon-scoped atomic key rotation
 
 Pairing-code generation is a Worker-only bootstrap route:
@@ -48,9 +49,12 @@ for Durable Objects on Cloudflare's free plan.
 Cloudflare token needs only the account's Worker script/route deployment
 permissions (plus the account and zone identifiers needed by Wrangler). The
 first operational step after deployment is
-to generate a daemon pairing code with the bootstrap route, exchange it, and
-store the returned API key in the local daemon configuration. Do not put the
-bootstrap secret or returned API keys in source control.
+to generate a daemon pairing code with the bootstrap route, send it with the
+tenant and daemon ID to `/api/auth/daemon/enroll`, and
+store the returned API key at `registry.remoteCredentialPath` (default
+`<registry.path>.remote-credentials.json`, mode 0600). The daemon reuses this
+key after restart; the bootstrap secret and one-time code are never stored by
+the daemon.
 
 Run locally with `npm run test:worker`. Use `npx wrangler@latest dev
 --config worker/wrangler.jsonc` for an isolated local Worker. Production

@@ -50,3 +50,18 @@ test("rejects an impostor daemon and never exposes a proxy route", async () => {
   const data = await call(registry, "GET", "/api/namespaces/team/aliases/other/data", undefined, { authorization: `Bearer ${apiKey}`, "X-Janus-Agent-ID": "daemon-a" });
   assert.equal(data.status, 404);
 });
+
+test("enrolls only the paired daemon and consumes the code once", async () => {
+  const h = harness();
+  const registry = new Registry(h.state, h.env);
+  const pairing = await call(registry, "POST", "/api/auth/pairing", { tenant: "team", daemonId: "daemon-a" }, { "X-Janus-Bootstrap-Secret": "bootstrap" });
+  const { code } = await pairing.json();
+  const impostor = await call(registry, "POST", "/api/auth/daemon/enroll", { tenant: "team", daemonId: "daemon-b", code });
+  assert.equal(impostor.status, 401);
+  const enrolled = await call(registry, "POST", "/api/auth/daemon/enroll", { tenant: "team", daemonId: "daemon-a", code });
+  assert.equal(enrolled.status, 201);
+  const { apiKey } = await enrolled.json();
+  assert.match(apiKey, /^janus_/);
+  const replay = await call(registry, "POST", "/api/auth/daemon/enroll", { tenant: "team", daemonId: "daemon-a", code });
+  assert.equal(replay.status, 401);
+});

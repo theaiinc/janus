@@ -85,7 +85,13 @@ func New(cfg config.Config, configPath string) (*App, error) {
 		return nil, err
 	}
 	if cfg.Registry.RemoteURL != "" {
-		remote, remoteErr := registry.NewRemoteClientForIdentity(cfg.Registry.RemoteURL, cfg.Registry.RemoteAPIKey, cfg.Registry.RemoteDaemonID, nil)
+		var remote *registry.RemoteClient
+		var remoteErr error
+		if cfg.Registry.RemoteAPIKey != "" {
+			remote, remoteErr = registry.NewRemoteClientForIdentity(cfg.Registry.RemoteURL, cfg.Registry.RemoteAPIKey, cfg.Registry.RemoteDaemonID, nil)
+		} else {
+			remote, remoteErr = registry.NewRemoteClientForEnrollment(cfg.Registry.RemoteURL, cfg.Registry.RemoteTenant, cfg.Registry.RemoteDaemonID, cfg.Registry.RemoteEnrollmentCode, cfg.Registry.RemoteCredentialPath, nil)
+		}
 		if remoteErr != nil {
 			return nil, remoteErr
 		}
@@ -318,6 +324,9 @@ func (a *App) advertiseService(ctx context.Context, service registry.ServiceRegi
 	if remote == nil {
 		return
 	}
+	if err := remote.Enroll(ctx); err != nil {
+		a.events.Add(events.TypeWarning, "", "remote registry enrollment failed", map[string]string{"error": err.Error()})
+	}
 	advertiseCtx, cancel := registry.RemoteContext(ctx)
 	defer cancel()
 	if err := remote.Advertise(advertiseCtx, service); err != nil {
@@ -333,6 +342,9 @@ func (a *App) remoteLoop(ctx context.Context) {
 	if remote == nil {
 		return
 	}
+	if err := remote.Enroll(ctx); err != nil {
+		a.events.Add(events.TypeWarning, "", "remote registry enrollment failed", map[string]string{"error": err.Error()})
+	}
 	if interval <= 0 {
 		interval = 30 * time.Second
 	}
@@ -344,6 +356,10 @@ func (a *App) remoteLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if err := remote.Enroll(ctx); err != nil {
+				a.events.Add(events.TypeWarning, "", "remote registry enrollment failed", map[string]string{"error": err.Error()})
+				continue
+			}
 			a.heartbeatAll(ctx, remote)
 		}
 	}

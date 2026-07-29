@@ -86,13 +86,16 @@ type ServerConfig struct {
 }
 
 type RegistryConfig struct {
-	Path              string   `yaml:"path"`
-	RefreshInterval   Duration `yaml:"refreshInterval"`
-	Timeout           Duration `yaml:"timeout"`
-	RemoteURL         string   `yaml:"remoteUrl"`
-	RemoteAPIKey      string   `yaml:"remoteApiKey"`
-	RemoteDaemonID    string   `yaml:"remoteDaemonId"`
-	AdvertiseInterval Duration `yaml:"advertiseInterval"`
+	Path                 string   `yaml:"path"`
+	RefreshInterval      Duration `yaml:"refreshInterval"`
+	Timeout              Duration `yaml:"timeout"`
+	RemoteURL            string   `yaml:"remoteUrl"`
+	RemoteAPIKey         string   `yaml:"remoteApiKey"`
+	RemoteDaemonID       string   `yaml:"remoteDaemonId"`
+	RemoteTenant         string   `yaml:"remoteTenant"`
+	RemoteEnrollmentCode string   `yaml:"remoteEnrollmentCode"`
+	RemoteCredentialPath string   `yaml:"remoteCredentialPath"`
+	AdvertiseInterval    Duration `yaml:"advertiseInterval"`
 }
 
 type DataPlaneConfig struct {
@@ -242,6 +245,15 @@ func (c *Config) ApplyDefaults() {
 	if c.Registry.RemoteAPIKey == "" {
 		c.Registry.RemoteAPIKey = strings.TrimSpace(os.Getenv("JANUS_REGISTRY_API_KEY"))
 	}
+	if c.Registry.RemoteEnrollmentCode == "" {
+		c.Registry.RemoteEnrollmentCode = strings.TrimSpace(os.Getenv("JANUS_REGISTRY_ENROLLMENT_CODE"))
+	}
+	if c.Registry.RemoteTenant == "" {
+		c.Registry.RemoteTenant = c.Onboarding.Tenant
+	}
+	if c.Registry.RemoteCredentialPath == "" && c.Registry.Path != "" {
+		c.Registry.RemoteCredentialPath = c.Registry.Path + ".remote-credentials.json"
+	}
 	if c.DataPlane.Mode == "" {
 		c.DataPlane.Mode = "direct"
 	}
@@ -327,8 +339,8 @@ func (c Config) Validate() error {
 	if len(c.Tunnels) == 0 && len(c.Services) == 0 && !c.Onboarding.Enabled {
 		return errors.New("at least one tunnel or service is required")
 	}
-	if strings.TrimSpace(c.Registry.RemoteURL) != "" && strings.TrimSpace(c.Registry.RemoteAPIKey) == "" {
-		return errors.New("registry.remoteApiKey is required when registry.remoteUrl is configured")
+	if strings.TrimSpace(c.Registry.RemoteURL) != "" && strings.TrimSpace(c.Registry.RemoteAPIKey) == "" && strings.TrimSpace(c.Registry.RemoteEnrollmentCode) == "" && (strings.TrimSpace(c.Registry.RemoteCredentialPath) == "" || strings.TrimSpace(c.Registry.RemoteDaemonID) == "") {
+		return errors.New("registry.remoteApiKey or registry.remoteEnrollmentCode is required when registry.remoteUrl is configured")
 	}
 	if strings.TrimSpace(c.Registry.RemoteURL) != "" && strings.TrimSpace(c.Registry.RemoteDaemonID) == "" {
 		return errors.New("registry.remoteDaemonId is required when registry.remoteUrl is configured")

@@ -28,8 +28,10 @@ export class Registry {
     const state = await this.load();
     const auth = await authenticate(request, state);
     const pairing = url.pathname === "/api/auth/pairing/exchange" || url.pathname === "/api/pairing/exchange";
+    const enrollment = url.pathname === "/api/auth/daemon/enroll";
     const bootstrap = url.pathname === "/api/auth/pairing";
     if (pairing) return this.exchange(request, state);
+    if (enrollment) return this.enrollDaemon(request, state);
     if (bootstrap) return this.generatePairing(request, state);
     if (url.pathname === "/api/auth/daemon/rotate") {
       if (!auth) return error(401, "valid daemon API key is required");
@@ -70,6 +72,23 @@ export class Registry {
     state.credentials[await hash(apiKey)] = { tenant: entry.tenant, scope: entry.scope, identity: entry.identity };
     await this.save(state);
     return json({ apiKey, tenant: entry.tenant }, 201);
+  }
+
+  async enrollDaemon(request, state) {
+    const body = await bodyJSON(request);
+    const tenant = normalize(body?.tenant);
+    const daemonId = String(body?.daemonId || "").trim();
+    const code = String(body?.code || "").trim();
+    const entry = code && state.pairings[await hash(code)];
+    if (!tenant || !daemonId || !entry || entry.used || entry.expiresAt < Date.now() ||
+        entry.scope !== "daemon" || entry.tenant !== tenant || entry.identity !== daemonId) {
+      return error(401, "invalid daemon enrollment");
+    }
+    entry.used = true;
+    const apiKey = randomToken();
+    state.credentials[await hash(apiKey)] = { tenant, scope: "daemon", identity: daemonId };
+    await this.save(state);
+    return json({ apiKey, tenant, daemonId }, 201);
   }
 
   async rotate(request, state, auth) {

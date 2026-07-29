@@ -170,12 +170,13 @@ not carry high-volume data traffic.
 ### Online registry advertisement
 
 A local daemon can mirror its configured and runtime services to an online Janus
-registry. Set `registry.remoteUrl` and keep `registry.remoteApiKey` in
-`JANUS_REGISTRY_API_KEY`; the daemon advertises namespace/alias records at
-startup and refreshes them on `registry.advertiseInterval`. Remote failures are
+registry. Set `registry.remoteUrl`, `registry.remoteTenant`, and the immutable
+`registry.remoteDaemonId`, then provide a short-lived Worker-issued
+`registry.remoteEnrollmentCode` (or `JANUS_REGISTRY_ENROLLMENT_CODE`). Janus
+exchanges that code once over HTTPS, stores only the returned daemon key at
+`registry.remoteCredentialPath`, and reuses it after restart. Existing
+`registry.remoteApiKey` configuration remains supported. Remote failures are
 reported as daemon events and do not stop local service supervision.
-Configure `registry.remoteDaemonId` for rotation and replace the stored key only
-after the registry confirms success.
 
 ## Docker smoke test
 
