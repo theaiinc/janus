@@ -43,3 +43,23 @@ func TestClientDiscoverAcrossNamespaces(t *testing.T) {
 		t.Fatalf("unexpected discovery response: %#v", services)
 	}
 }
+
+func TestClientDiscoverAnonymous(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			t.Fatalf("anonymous discovery unexpectedly sent API key")
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"services": []map[string]any{{"namespace": "public", "alias": "events"}},
+		})
+	}))
+	defer server.Close()
+
+	services, err := NewClient(server.URL, server.Client()).Discover(context.Background(), DiscoveryOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(services) != 1 || services[0].Namespace != "public" {
+		t.Fatalf("unexpected discovery response: %#v", services)
+	}
+}

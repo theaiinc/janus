@@ -37,15 +37,20 @@ export class Registry {
       if (!auth) return error(401, "valid daemon API key is required");
       return this.rotate(request, state, auth);
     }
-    if (!auth) return error(401, "valid API key is required");
-
     if ((url.pathname === "/api/discovery" || url.pathname === "/api/namespaces") &&
         request.method === "GET") {
       return this.discovery(url, state, auth);
     }
     const alias = parseAlias(url.pathname);
-    if (alias) return this.aliasRoute(request, url, state, auth, alias);
+    if (alias && request.method === "GET" && (!alias.action || alias.action === "endpoint")) {
+      return this.aliasRoute(request, url, state, auth, alias);
+    }
     const service = parseService(url.pathname);
+    if (service && request.method === "GET" && !service.action) {
+      return this.serviceRoute(request, state, auth, service);
+    }
+    if (!auth) return error(401, "valid API key is required");
+    if (alias) return this.aliasRoute(request, url, state, auth, alias);
     if (service) return this.serviceRoute(request, state, auth, service);
     return error(404, "route not found");
   }
@@ -203,6 +208,7 @@ async function authenticate(request, state) {
 }
 function canReadNamespace(state, auth, namespace) {
   if (!state.privateNamespaces[namespace]) return true;
+  if (!auth) return false;
   if (auth.credential.tenant !== namespace) return false;
   if (auth.scope === "namespace") return true;
   return auth.scope === "daemon" && state.owners[namespace] === auth.identity;

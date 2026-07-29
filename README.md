@@ -127,16 +127,22 @@ Janus serves these endpoints by default on `127.0.0.1:8088`:
 - `GET /api/services/{id}/health`
 - `GET /api/services/{id}/tunnels`
 - `POST /api/services/{id}/refresh`
+- `GET /api/discovery`
+- `GET /api/namespaces`
 - `PUT /api/namespaces/{namespace}/aliases/{alias}`
 - `PUT /api/namespaces/{namespace}/aliases/{alias}?upsert=true`
 - `GET /api/namespaces/{namespace}/aliases/{alias}`
 - `GET /api/namespaces/{namespace}/aliases/{alias}/endpoint`
 - `GET|POST|PUT|PATCH|DELETE /api/namespaces/{namespace}/aliases/{alias}/data/{path}`
 
-When API authentication is enabled, alias and endpoint routes require a tenant API
-key in `Authorization: Bearer <key>` or `X-API-Key`. A configured one-time pairing
-code can be exchanged at `POST /api/auth/pairing/exchange`; clients receive a
-separate scoped mobile API key and should not reuse agent credentials.
+Public discovery and alias resolution (`GET /api/discovery`, `GET /api/namespaces`,
+alias `GET`, and `/endpoint` `GET`) work before a client has a daemon credential.
+Alias registration, refresh, and data-plane writes still require a tenant API key
+in `Authorization: Bearer <key>` or `X-API-Key`. Private namespaces return no
+discovery records and `404` for anonymous alias or endpoint reads. A configured
+one-time pairing code can be exchanged at `POST /api/auth/pairing/exchange`;
+clients receive a separate scoped mobile API key and should not reuse agent
+credentials.
 `POST /api/auth/daemon/rotate` replaces a daemon-scoped key and requires the
 current key plus `{"daemonId":"..."}`. The identity must match the credential;
 there is no unauthenticated bootstrap rotation path.

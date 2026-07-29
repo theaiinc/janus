@@ -8,3 +8,5 @@ pip install theaiinc-janus-client
 
 Direct endpoint discovery is enabled by default. Use `mode="proxy"` to keep
 requests in Janus or `mode="auto"` to permit proxy fallback.
+`Client(url).discover()` lists public services without an API key; private
+namespace records still require a scoped credential.

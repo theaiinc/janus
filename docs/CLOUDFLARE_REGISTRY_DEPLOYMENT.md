@@ -16,6 +16,7 @@ Supported compatibility routes include:
 
 - `PUT /api/namespaces/{namespace}/aliases/{alias}?upsert=true` advertisement
 - `POST /api/services/{id}/refresh` heartbeat
+- `GET /api/discovery` and `GET /api/namespaces` public service discovery
 - `GET /api/namespaces/{namespace}/aliases/{alias}` discovery
 - `GET /api/namespaces/{namespace}/aliases/{alias}/endpoint` direct endpoint
 - `POST /api/auth/pairing/exchange` one-time credential exchange
@@ -27,7 +28,9 @@ Pairing-code generation is a Worker-only bootstrap route:
 codes are short-lived and single-use. Daemon credentials are tenant- and
 identity-bound; first registration claims a namespace, and another daemon
 cannot impersonate that owner. Private namespaces require the owner daemon or
-a namespace-scoped credential.
+a namespace-scoped credential; anonymous discovery and alias reads remain
+filtered or return `404`. Public reads do not weaken authenticated
+advertisement, heartbeat, or ownership enforcement.
 
 The endpoint route returns the selected Cloudflared URL as direct-mode
 routing metadata. There is deliberately no `/data` proxy route in the Worker.

@@ -90,6 +90,13 @@ test("discovers public services across daemons and protects private namespaces",
   assert.equal((await discovery.json()).services[0].endpoint.url, "https://public.example.com");
   const publicEndpoint = await call(registry, "GET", "/api/namespaces/other/aliases/public/endpoint", undefined, teamAuth);
   assert.equal(publicEndpoint.status, 200);
+  const anonymousDiscovery = await call(registry, "GET", "/api/discovery?q=public");
+  assert.equal(anonymousDiscovery.status, 200);
+  assert.equal((await anonymousDiscovery.json()).services[0].alias, "public");
+  const anonymousEndpoint = await call(registry, "GET", "/api/namespaces/other/aliases/public/endpoint");
+  assert.equal(anonymousEndpoint.status, 200);
+  const anonymousService = await call(registry, "GET", "/api/services/public");
+  assert.equal(anonymousService.status, 200);
 
   const privateAuth = await pair("private", "daemon-private", { private: true });
   const privateService = await call(registry, "PUT", "/api/namespaces/private/aliases/secret?upsert=true", {
@@ -100,6 +107,15 @@ test("discovers public services across daemons and protects private namespaces",
   assert.deepEqual((await hidden.json()).services, []);
   const hiddenEndpoint = await call(registry, "GET", "/api/namespaces/private/aliases/secret/endpoint", undefined, teamAuth);
   assert.equal(hiddenEndpoint.status, 404);
+  const anonymousHidden = await call(registry, "GET", "/api/discovery?namespace=private");
+  assert.equal(anonymousHidden.status, 200);
+  assert.deepEqual((await anonymousHidden.json()).services, []);
+  const anonymousHiddenEndpoint = await call(registry, "GET", "/api/namespaces/private/aliases/secret/endpoint");
+  assert.equal(anonymousHiddenEndpoint.status, 404);
+  const anonymousHiddenAlias = await call(registry, "GET", "/api/namespaces/private/aliases/secret");
+  assert.equal(anonymousHiddenAlias.status, 404);
+  const anonymousPrivateData = await call(registry, "GET", "/api/namespaces/private/aliases/secret/data/stream");
+  assert.equal(anonymousPrivateData.status, 401);
   const namespacePairing = await call(registry, "POST", "/api/auth/pairing", {
     tenant: "private", scope: "namespace", private: true,
   }, { "X-Janus-Bootstrap-Secret": "bootstrap" });

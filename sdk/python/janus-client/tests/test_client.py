@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(pathlib.Path(__file__).parents[1]))
 
-from janus_client import Emitter, Receiver
+from janus_client import Client, Emitter, Receiver
 
 
 class Response:
@@ -61,6 +61,19 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(result["apiKey"], "mobile-key")
         self.assertEqual(urlopen.call_args_list[0].args[0].full_url, "http://janus.local/api/auth/pairing/exchange")
         self.assertEqual(len(urlopen.call_args_list), 4)
+
+    @patch("urllib.request.urlopen")
+    def test_anonymous_client_discovers_public_services(self, urlopen):
+        urlopen.return_value = Response({"services": [{"namespace": "public", "alias": "events"}]})
+        client = Client("http://janus.local/")
+        services = client.discover(namespace="public", query="events stream")
+        request = urlopen.call_args.args[0]
+        self.assertEqual(
+            request.full_url,
+            "http://janus.local/api/discovery?namespace=public&q=events+stream",
+        )
+        self.assertNotIn("Authorization", request.headers)
+        self.assertEqual(services[0]["alias"], "events")
 
 
 if __name__ == "__main__":

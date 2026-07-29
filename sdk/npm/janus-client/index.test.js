@@ -65,3 +65,15 @@ test("client pairs and reuses endpoint discovery", async () => {
   assert.equal(calls.filter((call) => call.url.endsWith("/endpoint")).length, 1);
   assert.equal(calls[1].options.headers.authorization, "Bearer mobile-key");
 });
+
+test("anonymous clients discover public services without an API key", async () => {
+  let request;
+  const client = new (require("./index").Client)("http://janus.local", async (url, options) => {
+    request = { url, options };
+    return response(200, { services: [{ namespace: "public", alias: "events" }] });
+  });
+  const services = await client.discover({ namespace: "public", query: "events stream" });
+  assert.equal(services[0].alias, "events");
+  assert.equal(request.url, "http://janus.local/api/discovery?namespace=public&q=events+stream");
+  assert.equal(request.options.headers.authorization, undefined);
+});

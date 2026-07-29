@@ -51,6 +51,18 @@ class Client:
         self.api_key = result["apiKey"]
         return result
 
+    def discover(self, namespace="", alias="", query=""):
+        params = {}
+        if namespace:
+            params["namespace"] = namespace
+        if alias:
+            params["alias"] = alias
+        if query:
+            params["q"] = query
+        suffix = "?" + urllib.parse.urlencode(params) if params else ""
+        response = self.request("GET", "/api/discovery" + suffix)
+        return json.loads(response.read()).get("services", [])
+
     def endpoint(self, namespace, alias):
         key = (namespace, alias)
         cached = self._endpoint_cache.get(key)

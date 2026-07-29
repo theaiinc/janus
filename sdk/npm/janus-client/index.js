@@ -43,6 +43,17 @@ class Client {
     return result;
   }
 
+  async discover({ namespace = "", alias = "", query = "" } = {}) {
+    const params = new URLSearchParams();
+    if (namespace) params.set("namespace", namespace);
+    if (alias) params.set("alias", alias);
+    if (query) params.set("q", query);
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    const response = await this.request("GET", `/api/discovery${suffix}`);
+    const result = await response.json();
+    return result.services || [];
+  }
+
   async endpoint(namespace, alias) {
     const key = `${namespace}\0${alias}`;
     const cached = this.endpointCache.get(key);
