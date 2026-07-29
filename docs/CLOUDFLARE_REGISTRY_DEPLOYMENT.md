@@ -18,7 +18,6 @@ Supported compatibility routes include:
 - `POST /api/services/{id}/refresh` heartbeat
 - `GET /api/namespaces/{namespace}/aliases/{alias}` discovery
 - `GET /api/namespaces/{namespace}/aliases/{alias}/endpoint` direct endpoint
-- `GET /api/discovery` cross-daemon public/private discovery
 - `POST /api/auth/pairing/exchange` one-time credential exchange
 - `POST /api/auth/daemon/enroll` one-time daemon credential enrollment
 - `POST /api/auth/daemon/rotate` daemon-scoped atomic key rotation
@@ -32,8 +31,6 @@ a namespace-scoped credential.
 
 The endpoint route returns the selected Cloudflared URL as direct-mode
 routing metadata. There is deliberately no `/data` proxy route in the Worker.
-The discovery route returns routing metadata for public namespaces across all
-registered daemons; private namespaces require the owning namespace credential.
 
 ## Deploy
 

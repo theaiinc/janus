@@ -43,18 +43,6 @@ class Client {
     return result;
   }
 
-  async discover(options = {}) {
-    const params = new URLSearchParams();
-    for (const key of ["namespace", "alias"]) {
-      if (options[key]) params.set(key, options[key]);
-    }
-    if (options.query || options.q) params.set("q", options.query || options.q);
-    const suffix = params.toString() ? `?${params}` : "";
-    const response = await this.request("GET", `/api/discovery${suffix}`);
-    const result = await response.json();
-    return result.services || [];
-  }
-
   async endpoint(namespace, alias) {
     const key = `${namespace}\0${alias}`;
     const cached = this.endpointCache.get(key);
@@ -106,8 +94,8 @@ class Client {
 }
 
 class Emitter {
-  constructor(baseURL, fetchImpl, mode = "direct", apiKey = "") {
-    this.client = new Client(baseURL, fetchImpl, apiKey);
+  constructor(baseURL, fetchImpl, mode = "direct") {
+    this.client = new Client(baseURL, fetchImpl);
     this.mode = mode;
   }
 
@@ -136,8 +124,8 @@ class Emitter {
 }
 
 class Receiver {
-  constructor(baseURL, fetchImpl, mode = "direct", apiKey = "") {
-    this.client = new Client(baseURL, fetchImpl, apiKey);
+  constructor(baseURL, fetchImpl, mode = "direct") {
+    this.client = new Client(baseURL, fetchImpl);
     this.mode = mode;
   }
 

@@ -131,7 +131,6 @@ Janus serves these endpoints by default on `127.0.0.1:8088`:
 - `PUT /api/namespaces/{namespace}/aliases/{alias}?upsert=true`
 - `GET /api/namespaces/{namespace}/aliases/{alias}`
 - `GET /api/namespaces/{namespace}/aliases/{alias}/endpoint`
-- `GET /api/discovery?namespace={namespace}&alias={alias}&q={query}`
 - `GET|POST|PUT|PATCH|DELETE /api/namespaces/{namespace}/aliases/{alias}/data/{path}`
 
 When API authentication is enabled, alias and endpoint routes require a tenant API
@@ -167,11 +166,6 @@ The direct SDK flow resolves an endpoint once, caches it briefly, and sends
 subsequent requests directly to the selected tunnel. It refreshes discovery after
 cache expiry or transport failure. The registry remains a control plane and does
 not carry high-volume data traffic.
-
-Authenticated clients can call `/api/discovery` to find services across
-different daemons and tunnels. Public namespaces are returned globally;
-private namespaces are filtered unless the caller presents the owning daemon
-credential or a namespace-scoped API key.
 
 ### Online registry advertisement
 

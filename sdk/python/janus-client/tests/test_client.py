@@ -62,19 +62,6 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(urlopen.call_args_list[0].args[0].full_url, "http://janus.local/api/auth/pairing/exchange")
         self.assertEqual(len(urlopen.call_args_list), 4)
 
-    @patch("urllib.request.urlopen")
-    def test_discover_services_across_namespaces(self, urlopen):
-        urlopen.return_value = Response({
-            "services": [{"namespace": "other", "alias": "events"}],
-        })
-        receiver = Receiver("https://registry.example")
-        services = receiver.client.discover(query="events")
-        self.assertEqual(services[0]["namespace"], "other")
-        self.assertEqual(
-            urlopen.call_args.args[0].full_url,
-            "https://registry.example/api/discovery?q=events",
-        )
-
 
 if __name__ == "__main__":
     unittest.main()
