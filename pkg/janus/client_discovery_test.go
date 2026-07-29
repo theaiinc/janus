@@ -10,8 +10,14 @@ import (
 
 func TestClientDiscoverAcrossNamespaces(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/discovery" || r.URL.Query().Get("q") != "events" {
+		if r.URL.Path != "/api/discovery" ||
+			r.URL.Query().Get("namespace") != "team one" ||
+			r.URL.Query().Get("alias") != "events" ||
+			r.URL.Query().Get("q") != "events stream" {
 			t.Fatalf("unexpected discovery request: %s", r.URL.String())
+		}
+		if r.Header.Get("Authorization") != "Bearer mobile-key" {
+			t.Fatalf("discovery request missing API key")
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"services": []map[string]any{{
@@ -23,7 +29,13 @@ func TestClientDiscoverAcrossNamespaces(t *testing.T) {
 	}))
 	defer server.Close()
 
-	services, err := NewClient(server.URL, server.Client()).Discover(context.Background(), DiscoveryOptions{Query: "events"})
+	client := NewClient(server.URL, server.Client())
+	client.APIKey = "mobile-key"
+	services, err := client.Discover(context.Background(), DiscoveryOptions{
+		Namespace: "team one",
+		Alias:     "events",
+		Query:     "events stream",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
