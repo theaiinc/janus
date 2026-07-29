@@ -178,6 +178,52 @@ exchanges that code once over HTTPS, stores only the returned daemon key at
 `registry.remoteApiKey` configuration remains supported. Remote failures are
 reported as daemon events and do not stop local service supervision.
 
+#### First-time daemon enrollment
+
+Generate a short-lived daemon pairing code from the Worker. Keep the bootstrap
+secret private; it is never placed in the daemon configuration:
+
+```sh
+export REGISTRY_URL="https://janus.theaiinc.com"
+export TENANT="default"
+export DAEMON_ID="$(hostname)-janus"
+read -r -s -p "JANUS_BOOTSTRAP_SECRET: " JANUS_BOOTSTRAP_SECRET
+echo
+PAIRING_CODE="$(
+  curl --fail-with-body -sS -X POST "$REGISTRY_URL/api/auth/pairing" \
+    -H "Content-Type: application/json" \
+    -H "X-Janus-Bootstrap-Secret: $JANUS_BOOTSTRAP_SECRET" \
+    -d "$(jq -nc --arg tenant "$TENANT" --arg daemonId "$DAEMON_ID" \
+      '{tenant:$tenant,daemonId:$daemonId,ttlSeconds:600}')" |
+  jq -er '.code'
+)"
+unset JANUS_BOOTSTRAP_SECRET
+printf 'Pairing code: %s\n' "$PAIRING_CODE"
+```
+
+Add the returned code temporarily to `janus.yaml`:
+
+```yaml
+registry:
+  remoteUrl: https://janus.theaiinc.com
+  remoteTenant: default
+  remoteDaemonId: my-pc-janus
+  remoteEnrollmentCode: "PASTE_PAIRING_CODE_HERE"
+  remoteCredentialPath: /var/lib/janus/janus.remote-credentials.json
+```
+
+Use the same daemon ID in the request and configuration, then run:
+
+```sh
+janus validate-config --config janus.yaml
+janus run --config janus.yaml
+```
+
+Janus exchanges the one-time code and stores the daemon-scoped key at the
+credential path with mode `0600`. Remove `remoteEnrollmentCode` after the first
+successful startup; the persisted key is reused on later restarts. Pairing
+codes expire after 10 minutes and cannot be reused.
+
 ## Docker smoke test
 
 Build and run the local container smoke fixture with:

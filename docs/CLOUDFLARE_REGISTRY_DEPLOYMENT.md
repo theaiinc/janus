@@ -59,6 +59,44 @@ store the returned API key at `registry.remoteCredentialPath` (default
 key after restart; the bootstrap secret and one-time code are never stored by
 the daemon.
 
+### Copy-paste enrollment
+
+Generate a code using the bootstrap secret, then pass it to the daemon once:
+
+```sh
+export REGISTRY_URL="https://janus.theaiinc.com"
+export TENANT="default"
+export DAEMON_ID="$(hostname)-janus"
+read -r -s -p "JANUS_BOOTSTRAP_SECRET: " JANUS_BOOTSTRAP_SECRET
+echo
+PAIRING_CODE="$(
+  curl --fail-with-body -sS -X POST "$REGISTRY_URL/api/auth/pairing" \
+    -H "Content-Type: application/json" \
+    -H "X-Janus-Bootstrap-Secret: $JANUS_BOOTSTRAP_SECRET" \
+    -d "$(jq -nc --arg tenant "$TENANT" --arg daemonId "$DAEMON_ID" \
+      '{tenant:$tenant,daemonId:$daemonId,ttlSeconds:600}')" |
+  jq -er '.code'
+)"
+unset JANUS_BOOTSTRAP_SECRET
+printf 'Pairing code: %s\n' "$PAIRING_CODE"
+```
+
+Temporarily configure the daemon with the same ID and returned code:
+
+```yaml
+registry:
+  remoteUrl: https://janus.theaiinc.com
+  remoteTenant: default
+  remoteDaemonId: my-pc-janus
+  remoteEnrollmentCode: "PASTE_PAIRING_CODE_HERE"
+  remoteCredentialPath: /var/lib/janus/janus.remote-credentials.json
+```
+
+Run `janus validate-config --config janus.yaml`, then
+`janus run --config janus.yaml`. After the first successful startup, remove
+`remoteEnrollmentCode`; Janus will reuse the `0600` credential file. Codes
+expire after 10 minutes and are single-use.
+
 Run locally with `npm run test:worker`. Use `npx wrangler@latest dev
 --config worker/wrangler.jsonc` for an isolated local Worker. Production
 deployments update the Worker only; the manually managed custom-domain mapping
