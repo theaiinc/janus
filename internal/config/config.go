@@ -45,6 +45,18 @@ type Config struct {
 	Notifications NotificationsConfig `yaml:"notifications"`
 	Services      []ServiceConfig     `yaml:"services"`
 	Tunnels       []TunnelConfig      `yaml:"tunnels"`
+	Argus         ArgusConfig         `yaml:"argus"`
+}
+
+// ArgusConfig configures periodic self-reporting of tunnel health to Argus
+// (https://argus.theaiinc.com), a service-health-reporting platform. Janus
+// has no SDK for it (Argus's client is TS-only) so it POSTs the wire
+// contract directly.
+type ArgusConfig struct {
+	Enabled  bool     `yaml:"enabled"`
+	Endpoint string   `yaml:"endpoint"`
+	Token    string   `yaml:"token"`
+	Interval Duration `yaml:"interval"`
 }
 
 type AuthConfig struct {
@@ -256,6 +268,18 @@ func (c *Config) ApplyDefaults() {
 	}
 	if c.DataPlane.Mode == "" {
 		c.DataPlane.Mode = "direct"
+	}
+	if c.Argus.Token == "" {
+		c.Argus.Token = strings.TrimSpace(os.Getenv("JANUS_ARGUS_TOKEN"))
+	}
+	if c.Argus.Token != "" {
+		c.Argus.Enabled = true
+	}
+	if c.Argus.Endpoint == "" {
+		c.Argus.Endpoint = "https://argus.theaiinc.com"
+	}
+	if c.Argus.Interval.Duration == 0 {
+		c.Argus.Interval.Duration = 60 * time.Second
 	}
 	applyHealthDefaults(&c.Defaults.Health)
 	for i := range c.Tunnels {

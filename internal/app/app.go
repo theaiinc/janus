@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/theaiinc/janus/internal/argus"
 	"github.com/theaiinc/janus/internal/auth"
 	"github.com/theaiinc/janus/internal/config"
 	"github.com/theaiinc/janus/internal/events"
@@ -154,6 +155,9 @@ func (a *App) Run(ctx context.Context) error {
 	}
 	if a.remote != nil {
 		go a.remoteLoop(ctx)
+	}
+	if a.cfg.Argus.Enabled {
+		go a.argusLoop(ctx)
 	}
 
 	errCh := make(chan error, 1)
@@ -380,6 +384,34 @@ func (a *App) heartbeatAll(ctx context.Context, remote *registry.RemoteClient) {
 	defer heartbeatCancel()
 	if err := remote.HeartbeatAll(heartbeatCtx, services); err != nil {
 		a.events.Add(events.TypeWarning, "", "remote registry heartbeat failed", map[string]string{"error": err.Error()})
+	}
+}
+
+func (a *App) argusLoop(ctx context.Context) {
+	a.mu.RLock()
+	interval := a.cfg.Argus.Interval.Duration
+	reporter := argus.NewReporter(a.cfg.Argus)
+	a.mu.RUnlock()
+	if interval <= 0 {
+		interval = 60 * time.Second
+	}
+	report := func() {
+		reportCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		if err := reporter.Report(reportCtx, a.Statuses()); err != nil {
+			a.events.Add(events.TypeWarning, "", "argus report failed", map[string]string{"error": err.Error()})
+		}
+	}
+	report()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			report()
+		}
 	}
 }
 
