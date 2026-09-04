@@ -307,7 +307,34 @@ func (s *Server) handleAliasRoute(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(response.StatusCode)
-	_, _ = io.Copy(w, response.Body)
+	copyFlushing(w, response.Body)
+}
+
+// copyFlushing streams src to w, flushing after every chunk. A plain
+// io.Copy relies on w's own buffering to decide when bytes actually hit the
+// socket — for a low-throughput long-lived stream (SSE timeline events,
+// trickling one small JSON frame at a time) that buffer can sit well below
+// Go's internal flush threshold for minutes, so the client sees the
+// connection open but receives nothing after the first buffered chunk. This
+// proxy is a data-plane passthrough, not a bulk transfer, so paying for a
+// syscall per chunk is the right trade.
+func copyFlushing(w http.ResponseWriter, src io.Reader) {
+	flusher, canFlush := w.(http.Flusher)
+	buf := make([]byte, 4096)
+	for {
+		n, readErr := src.Read(buf)
+		if n > 0 {
+			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+				return
+			}
+			if canFlush {
+				flusher.Flush()
+			}
+		}
+		if readErr != nil {
+			return
+		}
+	}
 }
 
 func (s *Server) handlePairingExchange(w http.ResponseWriter, r *http.Request) {
