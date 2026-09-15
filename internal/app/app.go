@@ -176,6 +176,10 @@ func (a *App) Run(ctx context.Context) error {
 		if apiServer != nil {
 			_ = apiServer.Shutdown(shutdownCtx)
 		}
+		// Longer than the API's: a supervisor waits up to 5s for SIGTERM before SIGKILL.
+		stopCtx, cancelStop := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancelStop()
+		a.stopMonitors(stopCtx)
 		return ctx.Err()
 	case err := <-errCh:
 		return err
@@ -425,6 +429,25 @@ func (a *App) monitor(id string) (*Monitor, error) {
 	return monitor, nil
 }
 
+// stopMonitors ends every supervised process before the daemon exits. Supervised commands run in
+// their own process groups (supervisor/process_unix.go), so exiting no longer takes them down with
+// it: without this, each daemon restart left the previous tunnels running beside the new ones.
+func (a *App) stopMonitors(ctx context.Context) {
+	a.mu.RLock()
+	monitors := a.monitorSliceLocked()
+	a.mu.RUnlock()
+
+	var wg sync.WaitGroup
+	for _, monitor := range monitors {
+		wg.Add(1)
+		go func(m *Monitor) {
+			defer wg.Done()
+			m.Stop(ctx)
+		}(monitor)
+	}
+	wg.Wait()
+}
+
 func (a *App) monitorSliceLocked() []*Monitor {
 	monitors := make([]*Monitor, 0, len(a.monitors))
 	for _, monitor := range a.monitors {
@@ -521,6 +544,16 @@ func (m *Monitor) Start(ctx context.Context) {
 		}
 	}
 	go m.loop(ctx)
+}
+
+// Stop ends the monitor's supervised process, if it has one and it's running.
+func (m *Monitor) Stop(ctx context.Context) {
+	if m.process == nil {
+		return
+	}
+	if err := m.process.Stop(ctx); err != nil && !errors.Is(err, supervisor.ErrNotRunning) && m.events != nil {
+		m.events.Add(events.TypeError, m.id, "failed to stop tunnel process", map[string]string{"error": err.Error()})
+	}
 }
 
 func (m *Monitor) loop(ctx context.Context) {
