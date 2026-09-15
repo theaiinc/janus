@@ -31,3 +31,4 @@
 - Aha: Cloudflare free-plan Durable Object migrations require `new_sqlite_classes` rather than `new_classes` for the `Registry` class in `worker/wrangler.jsonc`.
 - Aha: Cloudflare validates Wrangler compatibility dates against the deployment service's UTC date; do not configure a future date when local time has already crossed into the next day.
 - Aha: The Go SDK's `Client.Discover`, `DiscoveryOptions`, and `DiscoveryService` are public compatibility APIs; keep discovery query construction on `Client.Do` so API-key authentication remains applied without affecting endpoint caching.
+- Aha: The Worker registry's anonymous read contract is intentionally limited to public discovery, alias resolution, endpoint metadata, and service lookup; route auth must run after those GET filters, while private reads remain filtered/404 and writes/advertisement stay authenticated.
