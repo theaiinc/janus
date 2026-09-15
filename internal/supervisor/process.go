@@ -11,7 +11,6 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 )
 
@@ -71,6 +70,9 @@ func (s *ProcessSupervisor) Start(_ context.Context) error {
 	// already owns process shutdown explicitly (SIGTERM, then a timeout,
 	// then SIGKILL), so lifetime here isn't context-governed at all.
 	cmd := shellCommand(s.command)
+	// Its own process group, so Stop and wait can end everything the command spawned — see
+	// process_unix.go. Otherwise every restart orphans the wrapper's background children.
+	configureProcessGroup(cmd)
 	logFile, logErr := os.Create(filepath.Join(os.TempDir(), fmt.Sprintf("janus-tunnel-%s.log", s.name)))
 	if logErr == nil {
 		cmd.Stdout = logFile
@@ -104,16 +106,16 @@ func (s *ProcessSupervisor) Stop(ctx context.Context) error {
 		return ErrNotRunning
 	}
 
-	if err := signalProcess(cmd.Process); err != nil && !errors.Is(err, os.ErrProcessDone) {
+	if err := terminateProcessTree(cmd.Process); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		return err
 	}
 
 	select {
 	case <-ctx.Done():
-		_ = cmd.Process.Kill()
+		_ = killProcessTree(cmd.Process)
 		return ctx.Err()
 	case <-time.After(5 * time.Second):
-		_ = cmd.Process.Kill()
+		_ = killProcessTree(cmd.Process)
 		return nil
 	case <-done:
 		return nil
@@ -153,6 +155,9 @@ func (s *ProcessSupervisor) RestartTotal() uint64 {
 
 func (s *ProcessSupervisor) wait(cmd *exec.Cmd) {
 	err := cmd.Wait()
+	// The command is gone, but anything it backgrounded may not be (a script that exited
+	// without stopping its children); nothing supervises those, so they go too.
+	reapProcessGroup(cmd.Process.Pid)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.logFile != nil {
@@ -181,11 +186,4 @@ func shellCommand(command string) *exec.Cmd {
 		return exec.Command("cmd", "/C", command)
 	}
 	return exec.Command("sh", "-c", command)
-}
-
-func signalProcess(process *os.Process) error {
-	if runtime.GOOS == "windows" {
-		return process.Kill()
-	}
-	return process.Signal(syscall.SIGTERM)
 }
