@@ -13,7 +13,7 @@ func TestProcessSupervisorStartRestartStop(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	s := NewProcessSupervisor("sleep 60")
+	s := NewProcessSupervisor("sleep 60", "test-sleep")
 	if err := s.Start(ctx); err != nil {
 		t.Fatalf("Start returned error: %v", err)
 	}
@@ -44,7 +44,7 @@ func TestProcessSupervisorDetectsExitedProcess(t *testing.T) {
 		t.Skip("shell exit command is Unix-specific")
 	}
 
-	s := NewProcessSupervisor("exit 7")
+	s := NewProcessSupervisor("exit 7", "test-exit")
 	if err := s.Start(context.Background()); err != nil {
 		t.Fatalf("Start returned error: %v", err)
 	}

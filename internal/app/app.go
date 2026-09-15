@@ -439,7 +439,7 @@ func (a *App) rebuildMonitors() {
 		id := tunnel.NormalizeID(tunnelCfg.Name)
 		var sup *supervisor.ProcessSupervisor
 		if tunnelCfg.Mode != "external" {
-			sup = supervisor.NewProcessSupervisor(tunnelCfg.Command)
+			sup = supervisor.NewProcessSupervisor(tunnelCfg.Command, tunnelCfg.Name)
 		}
 		monitor := NewMonitor(id, tunnelCfg, sup, a.events, a.notify)
 		next[id] = monitor
