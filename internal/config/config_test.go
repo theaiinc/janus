@@ -65,6 +65,45 @@ tunnels:
 	}
 }
 
+func TestParseAuthKeyFromEnvironment(t *testing.T) {
+	t.Setenv("JANUS_TEST_TEAM_KEY", " injected-secret ")
+	cfg, err := Parse([]byte(`
+auth:
+  enabled: true
+  apiKeys:
+    - key: literal-secret
+      tenant: team
+    - keyEnv: JANUS_TEST_TEAM_KEY
+      tenant: team
+tunnels:
+  - name: production
+    command: cloudflared tunnel run production
+`))
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	if cfg.Auth.APIKeys[0].Key != "literal-secret" || cfg.Auth.APIKeys[1].Key != "injected-secret" {
+		t.Fatalf("unexpected api keys: %#v", cfg.Auth.APIKeys)
+	}
+}
+
+func TestParseRejectsUnsetAuthKeyEnvironment(t *testing.T) {
+	t.Setenv("JANUS_TEST_MISSING_KEY", "")
+	_, err := Parse([]byte(`
+auth:
+  enabled: true
+  apiKeys:
+    - keyEnv: JANUS_TEST_MISSING_KEY
+      tenant: team
+tunnels:
+  - name: production
+    command: cloudflared tunnel run production
+`))
+	if err == nil || !strings.Contains(err.Error(), "keyEnv JANUS_TEST_MISSING_KEY is not set") {
+		t.Fatalf("expected unset keyEnv error, got %v", err)
+	}
+}
+
 func TestParseAcceptsDataPlaneModes(t *testing.T) {
 	for _, mode := range []string{"direct", "proxy", "auto"} {
 		cfg, err := Parse([]byte(`

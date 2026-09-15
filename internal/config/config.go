@@ -80,7 +80,10 @@ type OnboardingConfig struct {
 }
 
 type APIKeyConfig struct {
-	Key      string `yaml:"key"`
+	Key string `yaml:"key"`
+	// KeyEnv names an environment variable holding the key, for keys injected by a secret
+	// manager at launch instead of written into the config file. Used only when Key is empty.
+	KeyEnv   string `yaml:"keyEnv"`
 	Tenant   string `yaml:"tenant"`
 	Scope    string `yaml:"scope"`
 	Identity string `yaml:"identity"`
@@ -232,6 +235,11 @@ func (c *Config) ApplyDefaults() {
 	if c.Onboarding.Enabled {
 		c.Auth.Enabled = true
 	}
+	for i := range c.Auth.APIKeys {
+		if strings.TrimSpace(c.Auth.APIKeys[i].Key) == "" && strings.TrimSpace(c.Auth.APIKeys[i].KeyEnv) != "" {
+			c.Auth.APIKeys[i].Key = strings.TrimSpace(os.Getenv(strings.TrimSpace(c.Auth.APIKeys[i].KeyEnv)))
+		}
+	}
 	if key := strings.TrimSpace(os.Getenv("JANUS_API_KEY")); key != "" && len(c.Auth.APIKeys) == 0 {
 		c.Auth.Enabled = true
 		c.Auth.APIKeys = []APIKeyConfig{{Key: key, Tenant: firstEnv("JANUS_TENANT", "default")}}
@@ -377,6 +385,9 @@ func (c Config) Validate() error {
 			return errors.New("auth requires at least one api key or pairing code")
 		}
 		for i, key := range c.Auth.APIKeys {
+			if strings.TrimSpace(key.Key) == "" && strings.TrimSpace(key.KeyEnv) != "" {
+				return fmt.Errorf("auth.apiKeys[%d] keyEnv %s is not set", i, strings.TrimSpace(key.KeyEnv))
+			}
 			if strings.TrimSpace(key.Key) == "" || strings.TrimSpace(key.Tenant) == "" {
 				return fmt.Errorf("auth.apiKeys[%d] requires key and tenant", i)
 			}
