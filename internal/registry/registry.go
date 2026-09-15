@@ -253,10 +253,11 @@ func (r *Registry) Proxy(ctx context.Context, namespace, alias string, in *http.
 		}
 	}
 
+	dataPath := aliasDataPath(in.URL.Path)
 	endpoints := orderedEndpoints(service)
 	var lastErr error
 	for _, endpoint := range endpoints {
-		target, parseErr := EndpointURL(endpoint, in.URL.Path, in.URL.RawQuery)
+		target, parseErr := EndpointURL(endpoint, dataPath, in.URL.RawQuery)
 		if parseErr != nil {
 			lastErr = parseErr
 			continue
@@ -277,6 +278,17 @@ func (r *Registry) Proxy(ctx context.Context, namespace, alias string, in *http.
 		lastErr = ErrNoEndpoint
 	}
 	return nil, lastErr
+}
+
+// aliasDataPath mirrors api.aliasDataPath: it strips everything up through
+// the "/data" segment of an alias data-plane request path, since Proxy
+// forwards to the origin's own path space, not Janus's alias URL space.
+func aliasDataPath(path string) string {
+	index := strings.Index(path, "/data")
+	if index < 0 {
+		return ""
+	}
+	return strings.TrimPrefix(path[index+len("/data"):], "/")
 }
 
 func orderedEndpoints(service ServiceRegistration) []TunnelEndpoint {
