@@ -57,6 +57,11 @@ type ArgusConfig struct {
 	Endpoint string   `yaml:"endpoint"`
 	Token    string   `yaml:"token"`
 	Interval Duration `yaml:"interval"`
+	// Issuer and ClientID identify Janus's Aegis client. ClientSecret comes
+	// only from JANUS_ARGUS_CLIENT_SECRET and takes precedence over Token.
+	Issuer       string `yaml:"issuer"`
+	ClientID     string `yaml:"clientId"`
+	ClientSecret string `yaml:"-"`
 }
 
 type AuthConfig struct {
@@ -272,8 +277,15 @@ func (c *Config) ApplyDefaults() {
 	if c.Argus.Token == "" {
 		c.Argus.Token = strings.TrimSpace(os.Getenv("JANUS_ARGUS_TOKEN"))
 	}
-	if c.Argus.Token != "" {
+	c.Argus.ClientSecret = strings.TrimSpace(os.Getenv("JANUS_ARGUS_CLIENT_SECRET"))
+	if c.Argus.Token != "" || c.Argus.ClientSecret != "" {
 		c.Argus.Enabled = true
+	}
+	if c.Argus.Issuer == "" {
+		c.Argus.Issuer = "https://id.theaiinc.com"
+	}
+	if c.Argus.ClientID == "" {
+		c.Argus.ClientID = "janus-argus-reporter"
 	}
 	if c.Argus.Endpoint == "" {
 		c.Argus.Endpoint = "https://argus.theaiinc.com"
