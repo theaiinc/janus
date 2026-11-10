@@ -10,7 +10,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/theaiinc/janus/internal/config"
@@ -43,17 +45,77 @@ type report struct {
 }
 
 type Reporter struct {
-	client   *http.Client
-	endpoint string
-	token    string
+	client       *http.Client
+	endpoint     string
+	token        string
+	issuer       string
+	clientID     string
+	clientSecret string
+
+	mu        sync.Mutex
+	cached    string
+	expiresAt time.Time
 }
 
 func NewReporter(cfg config.ArgusConfig) *Reporter {
 	return &Reporter{
-		client:   &http.Client{},
-		endpoint: strings.TrimRight(cfg.Endpoint, "/"),
-		token:    cfg.Token,
+		client:       &http.Client{Timeout: 10 * time.Second},
+		endpoint:     strings.TrimRight(cfg.Endpoint, "/"),
+		token:        cfg.Token,
+		issuer:       strings.TrimRight(cfg.Issuer, "/"),
+		clientID:     cfg.ClientID,
+		clientSecret: cfg.ClientSecret,
 	}
+}
+
+// bearer returns the token to report with: a short-lived Aegis token when a
+// client secret is configured, otherwise the fixed legacy token.
+func (r *Reporter) bearer(ctx context.Context) (string, error) {
+	if r.clientSecret == "" {
+		return r.token, nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.cached != "" && time.Now().Add(30*time.Second).Before(r.expiresAt) {
+		return r.cached, nil
+	}
+	form := url.Values{"grant_type": {"client_credentials"}, "resource": {r.endpoint}, "scope": {"argus:report"}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.issuer+"/token", strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("content-type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth(r.clientID, r.clientSecret)
+	resp, err := r.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return "", fmt.Errorf("aegis token request rejected with status %d", resp.StatusCode)
+	}
+	var data struct {
+		AccessToken string `json:"access_token"`
+		ExpiresIn   int    `json:"expires_in"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return "", fmt.Errorf("aegis token response could not be read")
+	}
+	if data.AccessToken == "" {
+		return "", fmt.Errorf("aegis token response had no token")
+	}
+	if data.ExpiresIn == 0 {
+		data.ExpiresIn = 300
+	}
+	r.cached = data.AccessToken
+	r.expiresAt = time.Now().Add(time.Duration(data.ExpiresIn) * time.Second)
+	return r.cached, nil
+}
+
+func (r *Reporter) forgetToken() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.cached = ""
 }
 
 // Report submits the current tunnel statuses as a single Argus health
@@ -89,13 +151,20 @@ func (r *Reporter) Report(ctx context.Context, statuses []tunnel.Status) error {
 		return err
 	}
 	req.Header.Set("content-type", "application/json")
-	req.Header.Set("authorization", "Bearer "+r.token)
+	token, err := r.bearer(ctx)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("authorization", "Bearer "+token)
 
 	resp, err := r.client.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		r.forgetToken()
+	}
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("argus report rejected with status %d", resp.StatusCode)
 	}
